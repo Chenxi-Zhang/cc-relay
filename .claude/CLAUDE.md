@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-cc-relay is a multi-provider proxy for Claude Code written in Go. It sits between Claude Code and multiple LLM providers (Anthropic, Z.AI, Ollama, AWS Bedrock, Azure Foundry, Vertex AI), enabling rate limit pooling, cost optimization, automatic failover, and flexible provider routing.
+cc-relay is a multi-provider proxy for Claude Code written in Go. It sits between Claude Code and multiple LLM providers (Anthropic, Z.AI, MiniMax, Ollama, AWS Bedrock, Azure Foundry, Vertex AI), enabling rate limit pooling, cost optimization, automatic failover, and flexible provider routing.
 
 ## Development Workflow
 
@@ -273,7 +273,7 @@ All tools are installed to `$GOPATH/bin` (ensure it's in your `$PATH`).
 3. **Providers** (`internal/providers/`)
    - Provider interface with `TransformRequest`, `TransformResponse`, `Authenticate`, `HealthCheck`
    - Each provider implementation handles API-specific transformations
-   - Direct implementations: `anthropic.go`, `zai.go`, `ollama.go`, `bedrock.go`, `azure.go`, `vertex.go`
+   - Direct implementations: `anthropic.go`, `zai.go`, `minimax.go`, `ollama.go`, `bedrock.go`, `azure.go`, `vertex.go`
 
 4. **Health Tracking** (`internal/health/`)
    - Circuit breaker with CLOSED/OPEN/HALF-OPEN states
@@ -314,6 +314,7 @@ All tools are installed to `$GOPATH/bin` (ensure it's in your `$PATH`).
 | **Azure** | Use `x-api-key` header (not `api-key`), deployment names as model IDs |
 | **Ollama** | No prompt caching, no PDF support, images must be base64 (no URLs), `budget_tokens` accepted but not enforced |
 | **Z.AI** | Fully Anthropic-compatible, use model mapping for GLM models |
+| **MiniMax** | Anthropic-compatible, uses `Authorization: Bearer` instead of `x-api-key` |
 
 ### SSE Streaming Requirements
 
