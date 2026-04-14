@@ -9,10 +9,12 @@ import (
 )
 
 // ModelsResponse represents the response format for /v1/models endpoint.
-// This matches the Anthropic/OpenAI model list response format.
+// This matches the Anthropic model list response format.
 type ModelsResponse struct {
-	Object string            `json:"object"`
-	Data   []providers.Model `json:"data"`
+	Data    []providers.Model `json:"data"`
+	HasMore bool              `json:"has_more"`
+	FirstID *string           `json:"first_id"`
+	LastID  *string           `json:"last_id"`
 }
 
 // ModelsHandler handles requests to /v1/models endpoint.
@@ -54,9 +56,17 @@ func (h *ModelsHandler) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
 		return provider.ListModels()
 	})
 
+	var firstID, lastID *string
+	if len(allModels) > 0 {
+		firstID = &allModels[0].ID
+		lastID = &allModels[len(allModels)-1].ID
+	}
+
 	response := ModelsResponse{
-		Object: "list",
-		Data:   allModels,
+		Data:    allModels,
+		HasMore: false,
+		FirstID: firstID,
+		LastID:  lastID,
 	}
 
 	writeJSON(writer, http.StatusOK, response)

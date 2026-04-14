@@ -395,11 +395,9 @@ func TestAzureProviderListModels(t *testing.T) {
 		assert.Len(t, models, len(providers.DefaultAzureModels))
 
 		for _, model := range models {
-			assert.Equal(t, "model", model.Object)
-			assert.Equal(t, providers.AzureOwner, model.OwnedBy)
-			assert.Equal(t, "test-azure", model.Provider)
-			assert.Greater(t, model.Created, int64(0))
-		}
+			assert.Equal(t, "model", model.Type)
+			assert.NotEmpty(t, model.CreatedAt)
+								}
 	})
 
 	t.Run("returns custom models when specified", func(t *testing.T) {

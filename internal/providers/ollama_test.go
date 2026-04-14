@@ -102,7 +102,7 @@ func TestOllamaListModelsWithConfiguredModels(t *testing.T) {
 	result := provider.ListModels()
 
 	assertListModelsWithConfiguredModels(
-		t, result, "ollama", "ollama-primary",
+		t, result,
 	)
 
 	// Verify specific model IDs

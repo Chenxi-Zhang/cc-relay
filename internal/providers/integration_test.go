@@ -465,10 +465,10 @@ func TestProviderModelMapping(t *testing.T) {
 			t.Errorf("Expected second model ID=custom-model-2, got %s", models[1].ID)
 		}
 
-		// Verify owner is zhipu
+		// Verify models have correct type
 		for _, m := range models {
-			if m.OwnedBy != "zhipu" {
-				t.Errorf("Expected model owned_by=zhipu, got %s", m.OwnedBy)
+			if m.Type != "model" {
+				t.Errorf("Expected model type=model, got %s", m.Type)
 			}
 		}
 	})
@@ -498,8 +498,8 @@ func TestProviderModelMapping(t *testing.T) {
 
 		// Verify owner is ollama
 		for _, m := range models {
-			if m.OwnedBy != "ollama" {
-				t.Errorf("Expected model owned_by=ollama, got %s", m.OwnedBy)
+			if m.Type != "model" {
+				t.Errorf("Expected model type=model, got %s", m.Type)
 			}
 		}
 	})

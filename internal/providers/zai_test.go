@@ -102,7 +102,7 @@ func TestZAIListModelsWithConfiguredModels(t *testing.T) {
 	result := provider.ListModels()
 
 	assertListModelsWithConfiguredModels(
-		t, result, "zhipu", "zai-primary",
+		t, result,
 	)
 
 	// Verify specific model IDs

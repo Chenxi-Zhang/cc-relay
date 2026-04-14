@@ -107,17 +107,15 @@ func (p *BaseProvider) ListModels() []Model {
 		return []Model{}
 	}
 
-	now := time.Now().Unix()
+	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Use lo.Map to transform model IDs into Model structs
 	return lo.Map(p.models, func(modelID string, _ int) Model {
 		return Model{
 			ID:          modelID,
-			Object:      "model",
+			Type:        "model",
 			DisplayName: modelID,
-			OwnedBy:     p.owner,
-			Provider:    p.name,
-			Created:     now,
+			CreatedAt:   now,
 		}
 	})
 }

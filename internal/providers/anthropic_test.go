@@ -88,7 +88,7 @@ func TestListModelsWithConfiguredModels(t *testing.T) {
 	result := provider.ListModels()
 
 	assertListModelsWithConfiguredModels(
-		t, result, "anthropic", "anthropic-primary",
+		t, result,
 	)
 
 	// Verify specific model IDs

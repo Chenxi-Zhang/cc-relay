@@ -136,7 +136,7 @@ func TestMiniMaxListModelsWithConfiguredModels(t *testing.T) {
 	result := provider.ListModels()
 
 	assertListModelsWithConfiguredModels(
-		t, result, "minimax", "minimax-primary",
+		t, result,
 	)
 
 	// Verify specific model IDs

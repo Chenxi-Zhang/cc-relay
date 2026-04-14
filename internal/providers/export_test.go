@@ -3,6 +3,7 @@ package providers_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/omarluq/cc-relay/internal/providers"
 )
@@ -209,8 +210,6 @@ func assertForwardHeadersEdgeCases(t *testing.T, provider providers.Provider) {
 func assertListModelsWithConfiguredModels(
 	t *testing.T,
 	result []providers.Model,
-	expectedOwner string,
-	expectedProvider string,
 ) {
 	t.Helper()
 
@@ -219,16 +218,13 @@ func assertListModelsWithConfiguredModels(
 	}
 
 	// First model
-	if result[0].Object != "model" {
-		t.Errorf("Expected object=model, got %s", result[0].Object)
+	if result[0].Type != "model" {
+		t.Errorf("Expected type=model, got %s", result[0].Type)
 	}
-	if result[0].OwnedBy != expectedOwner {
-		t.Errorf("Expected owned_by=%s, got %s", expectedOwner, result[0].OwnedBy)
+	if result[0].CreatedAt == "" {
+		t.Error("Expected created_at to be set")
 	}
-	if result[0].Provider != expectedProvider {
-		t.Errorf("Expected provider=%s, got %s", expectedProvider, result[0].Provider)
-	}
-	if result[0].Created == 0 {
-		t.Error("Expected created timestamp to be set")
+	if _, err := time.Parse(time.RFC3339, result[0].CreatedAt); err != nil {
+		t.Errorf("Expected created_at to be valid RFC 3339, got %s: %v", result[0].CreatedAt, err)
 	}
 }

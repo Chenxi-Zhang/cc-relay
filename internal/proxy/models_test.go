@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,13 +43,19 @@ func TestModelsHandlerReturnsCorrectFormat(t *testing.T) {
 	var response proxy.ModelsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
 
-	assert.Equal(t, proxy.ListObject, response.Object)
 	require.Len(t, response.Data, 2)
 	assert.Equal(t, "claude-sonnet-4-5-20250514", response.Data[0].ID)
-	assert.Equal(t, "model", response.Data[0].Object)
+	assert.Equal(t, "model", response.Data[0].Type)
 	assert.Equal(t, "claude-sonnet-4-5-20250514", response.Data[0].DisplayName)
-	assert.Equal(t, "anthropic", response.Data[0].OwnedBy)
-	assert.Equal(t, "anthropic-primary", response.Data[0].Provider)
+	assert.NotEmpty(t, response.Data[0].CreatedAt)
+	_, err := time.Parse(time.RFC3339, response.Data[0].CreatedAt)
+	assert.NoError(t, err, "created_at should be valid RFC 3339")
+
+	assert.False(t, response.HasMore)
+	require.NotNil(t, response.FirstID)
+	assert.Equal(t, "claude-sonnet-4-5-20250514", *response.FirstID)
+	require.NotNil(t, response.LastID)
+	assert.Equal(t, "claude-opus-4-5-20250514", *response.LastID)
 }
 
 func TestModelsHandlerMultipleProviders(t *testing.T) {
@@ -99,6 +106,10 @@ func TestModelsHandlerMultipleProviders(t *testing.T) {
 			t.Errorf("Expected model %s to be present", expected)
 		}
 	}
+
+	assert.False(t, response.HasMore)
+	require.NotNil(t, response.FirstID)
+	require.NotNil(t, response.LastID)
 }
 
 func TestModelsHandlerEmptyProviders(t *testing.T) {
@@ -111,8 +122,10 @@ func TestModelsHandlerEmptyProviders(t *testing.T) {
 
 	var response proxy.ModelsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-	assert.Equal(t, proxy.ListObject, response.Object)
 	assert.Empty(t, response.Data)
+	assert.False(t, response.HasMore)
+	assert.Nil(t, response.FirstID)
+	assert.Nil(t, response.LastID)
 }
 
 func TestModelsHandlerProviderWithDefaultModels(t *testing.T) {
@@ -127,6 +140,9 @@ func TestModelsHandlerProviderWithDefaultModels(t *testing.T) {
 	var response proxy.ModelsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
 	assert.Len(t, response.Data, len(providers.DefaultAnthropicModels))
+	assert.False(t, response.HasMore)
+	require.NotNil(t, response.FirstID)
+	require.NotNil(t, response.LastID)
 }
 
 func TestModelsHandlerNilProviders(t *testing.T) {
@@ -139,6 +155,8 @@ func TestModelsHandlerNilProviders(t *testing.T) {
 
 	var response proxy.ModelsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-	assert.Equal(t, proxy.ListObject, response.Object)
 	assert.Empty(t, response.Data)
+	assert.False(t, response.HasMore)
+	assert.Nil(t, response.FirstID)
+	assert.Nil(t, response.LastID)
 }
