@@ -258,27 +258,34 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	if name, ok := resp.Request.Context().Value(providerNameContextKey).(string); ok {
 		providerName = name
 	}
+
+	var skipCircuitBreaker bool
+
 	if providerName != "" {
 		// Thread-safe read of provider proxy
 		h.proxyMu.RLock()
 		pp, ok := h.providerProxies[providerName]
 		h.proxyMu.RUnlock()
 		if ok && pp.KeyPool != nil {
-			h.updateKeyPoolFromResponse(resp, pp.KeyPool)
+			skipCircuitBreaker = h.updateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
 		}
 	}
 
-	// Report outcome to circuit breaker
-	h.reportOutcome(resp)
+	// Report outcome to circuit breaker (skip for permanent key errors)
+	h.reportOutcomeWithSkip(resp, skipCircuitBreaker)
 
 	return nil
 }
 
 // updateKeyPoolFromResponse updates key pool state from response headers.
-func (h *Handler) updateKeyPoolFromResponse(resp *http.Response, pool *keypool.KeyPool) {
+// Returns true if the circuit breaker should skip counting this as a provider failure
+// (e.g., permanent key errors that don't indicate provider health issues).
+func (h *Handler) updateKeyPoolFromResponse(
+	resp *http.Response, pool *keypool.KeyPool, prov providers.Provider,
+) bool {
 	keyID, ok := resp.Request.Context().Value(keyIDContextKey).(string)
 	if !ok || keyID == "" {
-		return
+		return false
 	}
 
 	logger := zerolog.Ctx(resp.Request.Context())
@@ -290,6 +297,12 @@ func (h *Handler) updateKeyPoolFromResponse(resp *http.Response, pool *keypool.K
 
 	// Handle 429 from backend
 	if resp.StatusCode == http.StatusTooManyRequests {
+		// Use ZAI-specific 429 handling for Zhipu providers
+		if providers.IsZAIProvider(prov.Owner()) {
+			return h.handleZAI429(resp, pool, keyID, logger)
+		}
+
+		// Generic 429 handling for other providers
 		retryAfter := parseRetryAfter(resp.Header)
 		pool.MarkKeyExhausted(keyID, retryAfter)
 		logger.Warn().
@@ -297,10 +310,82 @@ func (h *Handler) updateKeyPoolFromResponse(resp *http.Response, pool *keypool.K
 			Dur("cooldown", retryAfter).
 			Msg("key hit rate limit, marking cooldown")
 	}
+
+	return false
 }
 
-// reportOutcome records success or failure to the circuit breaker.
-func (h *Handler) reportOutcome(resp *http.Response) {
+// handleZAI429 handles ZAI-specific 429 error responses with fine-grained error code parsing.
+// Returns true if the error is a permanent key issue (circuit breaker should skip).
+//
+// ZAI returns business error codes in the response body:
+//
+//	{"error":{"code":"1302","message":"Rate limit reached for requests"}}
+//
+// Different codes require different handling:
+//   - Transient (1302, 1303, 1305, 1312): short cooldown
+//   - Quota exhausted (1304, 1308, 1310): longer cooldown based on reset time
+//   - Permanent (1309, 1311, 1313, 1112, 1113, 1121): mark key unhealthy
+func (h *Handler) handleZAI429(
+	resp *http.Response, pool *keypool.KeyPool, keyID string, logger *zerolog.Logger,
+) bool {
+	// Read the response body to parse the ZAI error code.
+	// 429 responses are complete JSON, not streaming, so this is safe.
+	info, bodyBytes, err := providers.ParseZAI429Error(resp.Body)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to read ZAI 429 response body")
+		retryAfter := parseRetryAfter(resp.Header)
+		pool.MarkKeyExhausted(keyID, retryAfter)
+		return false
+	}
+
+	// Restore the body so the proxy can still send it to the client
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	resp.ContentLength = int64(len(bodyBytes))
+
+	if info == nil {
+		// Body is not a recognizable ZAI error format — use generic cooldown
+		retryAfter := parseRetryAfter(resp.Header)
+		pool.MarkKeyExhausted(keyID, retryAfter)
+		logger.Warn().
+			Str("key_id", keyID).
+			Dur("cooldown", retryAfter).
+			Msg("ZAI 429 with unparseable body, using generic cooldown")
+		return false
+	}
+
+	// Log the specific ZAI error with full details
+	event := logger.Warn().
+		Str("key_id", keyID).
+		Str("zai_error_code", info.Code).
+		Str("zai_error_msg", info.Message).
+		Str("category", info.Category.String())
+
+	switch info.Category {
+	case providers.ZAICatTransient:
+		pool.MarkKeyExhausted(keyID, info.Cooldown)
+		event.
+			Dur("cooldown", info.Cooldown).
+			Msg("ZAI transient rate limit, marking key cooldown")
+
+	case providers.ZAICatQuotaExhausted:
+		pool.MarkKeyExhausted(keyID, info.Cooldown)
+		event.
+			Dur("cooldown", info.Cooldown).
+			Msg("ZAI quota exhausted, marking key long cooldown")
+
+	case providers.ZAICatPermanent:
+		pool.MarkKeyUnhealthy(keyID, fmt.Errorf("ZAI permanent error [%s]: %s", info.Code, info.Message))
+		event.Msg("ZAI permanent error, marking key unhealthy")
+		return true // Skip circuit breaker — provider is fine, key is the problem
+	}
+
+	return false
+}
+
+// reportOutcomeWithSkip records success or failure to the circuit breaker.
+// When skip is true (e.g., permanent key errors), the outcome is not reported,
+// preventing key-specific issues from affecting the provider's circuit breaker state.
+func (h *Handler) reportOutcomeWithSkip(resp *http.Response, skip bool) {
 	if h.healthTracker == nil {
 		return // No health tracking configured
 	}
@@ -309,6 +394,11 @@ func (h *Handler) reportOutcome(resp *http.Response) {
 	providerName, ok := resp.Request.Context().Value(providerNameContextKey).(string)
 	if !ok || providerName == "" {
 		return // No provider name in context (single provider mode without routing)
+	}
+
+	// Skip reporting for permanent key errors — they don't indicate provider health issues
+	if skip {
+		return
 	}
 
 	if health.ShouldCountAsFailure(resp.StatusCode, nil) {

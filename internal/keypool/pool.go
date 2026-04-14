@@ -254,6 +254,50 @@ func (p *KeyPool) MarkKeyExhausted(keyID string, retryAfter time.Duration) {
 		Msg("Key marked as exhausted with cooldown")
 }
 
+// MarkKeyUnhealthy marks a key as unhealthy with the given error.
+// Unhealthy keys are permanently excluded from selection until MarkKeyHealthy is called.
+// Use this for permanent errors (account locked, plan expired, etc.) where retrying
+// the same key will never succeed.
+func (p *KeyPool) MarkKeyUnhealthy(keyID string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	key, ok := p.keyMap[keyID]
+	if !ok {
+		log.Warn().
+			Str("provider", p.provider).
+			Str("key_id", keyID).
+			Msg("Attempted to mark unknown key as unhealthy")
+		return
+	}
+
+	key.MarkUnhealthy(err)
+
+	log.Error().
+		Str("provider", p.provider).
+		Str("key_id", keyID).
+		Err(err).
+		Msg("Key marked as unhealthy (permanent error)")
+}
+
+// MarkKeyHealthy marks a key as healthy again, clearing any previous error.
+func (p *KeyPool) MarkKeyHealthy(keyID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	key, ok := p.keyMap[keyID]
+	if !ok {
+		return
+	}
+
+	key.MarkHealthy()
+
+	log.Info().
+		Str("provider", p.provider).
+		Str("key_id", keyID).
+		Msg("Key marked as healthy")
+}
+
 // GetEarliestResetTime returns the duration until the earliest rate limit reset.
 // Used for setting retry-after headers when all keys are exhausted.
 // Returns 60s default if no reset times are set.
