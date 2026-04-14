@@ -46,6 +46,7 @@ func TestModelsHandlerReturnsCorrectFormat(t *testing.T) {
 	require.Len(t, response.Data, 2)
 	assert.Equal(t, "claude-sonnet-4-5-20250514", response.Data[0].ID)
 	assert.Equal(t, "model", response.Data[0].Object)
+	assert.Equal(t, "claude-sonnet-4-5-20250514", response.Data[0].DisplayName)
 	assert.Equal(t, "anthropic", response.Data[0].OwnedBy)
 	assert.Equal(t, "anthropic-primary", response.Data[0].Provider)
 }

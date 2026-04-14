@@ -6,11 +6,12 @@ import "net/http"
 // Model represents an available model from a provider.
 // This matches the Anthropic/OpenAI model list response format.
 type Model struct {
-	ID       string `json:"id"`
-	Object   string `json:"object"`
-	OwnedBy  string `json:"owned_by"`
-	Provider string `json:"provider"`
-	Created  int64  `json:"created"`
+	ID          string `json:"id"`
+	Object      string `json:"object"`
+	DisplayName string `json:"display_name"`
+	OwnedBy     string `json:"owned_by"`
+	Provider    string `json:"provider"`
+	Created     int64  `json:"created"`
 }
 
 // Provider defines the interface for LLM backend providers.

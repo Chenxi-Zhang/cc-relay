@@ -112,11 +112,12 @@ func (p *BaseProvider) ListModels() []Model {
 	// Use lo.Map to transform model IDs into Model structs
 	return lo.Map(p.models, func(modelID string, _ int) Model {
 		return Model{
-			ID:       modelID,
-			Object:   "model",
-			OwnedBy:  p.owner,
-			Provider: p.name,
-			Created:  now,
+			ID:          modelID,
+			Object:      "model",
+			DisplayName: modelID,
+			OwnedBy:     p.owner,
+			Provider:    p.name,
+			Created:     now,
 		}
 	})
 }
