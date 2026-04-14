@@ -590,6 +590,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		defer release()
 	}
 
+	SetProviderNameOnWriter(writer, selected.Provider.Name())
+
 	proxyCtx, requestOK := h.prepareProxyRequest(writer, request, selected.Provider)
 	if !requestOK {
 		return

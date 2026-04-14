@@ -166,6 +166,10 @@ func logRequestCompletion(
 		logCtx = logCtx.Int("sse_events", wrapped.sseEvents)
 	}
 
+	if wrapped.providerName != "" {
+		logCtx = logCtx.Str("provider", wrapped.providerName)
+	}
+
 	logger := logCtx.Logger()
 	switch {
 	case wrapped.statusCode >= 500:
@@ -466,9 +470,10 @@ func getBodyPreview(request *http.Request) string {
 // responseWriter wraps http.ResponseWriter to capture status code and SSE events.
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode  int
-	sseEvents   int
-	isStreaming bool
+	statusCode   int
+	sseEvents    int
+	isStreaming  bool
+	providerName string
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -493,6 +498,19 @@ func (rw *responseWriter) Write(data []byte) (int, error) {
 		}
 	}
 	return rw.ResponseWriter.Write(data)
+}
+
+// SetProviderName records the provider name on the response writer for logging.
+func (rw *responseWriter) SetProviderName(name string) {
+	rw.providerName = name
+}
+
+// SetProviderNameOnWriter sets the provider name on the response writer if it
+// is a *responseWriter (i.e. wrapped by the logging middleware).
+func SetProviderNameOnWriter(w http.ResponseWriter, name string) {
+	if rw, ok := w.(*responseWriter); ok {
+		rw.providerName = name
+	}
 }
 
 // ConcurrencyLimiter enforces a global maximum number of concurrent requests.
