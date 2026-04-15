@@ -26,7 +26,7 @@ var _ net.Error = &mockNetError{timeout: false, temporary: false}
 func TestStatusCodeTriggerShouldFailover(t *testing.T) {
 	t.Parallel()
 
-	trigger := router.NewStatusCodeTrigger(400, 429, 500, 502, 503, 504)
+	trigger := router.NewStatusCodeTrigger(429, 500, 502, 503, 504)
 
 	tests := []struct {
 		name       string
@@ -42,7 +42,7 @@ func TestStatusCodeTriggerShouldFailover(t *testing.T) {
 		// Should NOT trigger
 		{name: "200 OK", statusCode: 200, want: false},
 		{name: "201 Created", statusCode: 201, want: false},
-		{name: "400 Bad Request", statusCode: 400, want: true},
+		{name: "400 Bad Request", statusCode: 400, want: false},
 		{name: "401 Unauthorized", statusCode: 401, want: false},
 		{name: "403 Forbidden", statusCode: 403, want: false},
 		{name: "404 Not Found", statusCode: 404, want: false},
@@ -230,7 +230,7 @@ func TestDefaultTriggersStatusCodes(t *testing.T) {
 	}
 
 	// Verify expected status codes trigger failover
-	expectedCodes := []int{400, 429, 500, 502, 503, 504}
+	expectedCodes := []int{429, 500, 502, 503, 504}
 	for _, code := range expectedCodes {
 		if !statusTrigger.ShouldFailover(nil, code) {
 			t.Errorf("router.DefaultTriggers status_code should fire on %d", code)

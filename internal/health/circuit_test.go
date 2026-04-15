@@ -329,7 +329,7 @@ func TestShouldCountAsFailure(t *testing.T) {
 	}{
 		{name: "200 OK", statusCode: 200, err: nil, want: false},
 		{name: "201 Created", statusCode: 201, err: nil, want: false},
-		{name: "400 Bad Request", statusCode: 400, err: nil, want: true},
+		{name: "400 Bad Request", statusCode: 400, err: nil, want: false},
 		{name: "401 Unauthorized", statusCode: 401, err: nil, want: false},
 		{name: "403 Forbidden", statusCode: 403, err: nil, want: false},
 		{name: "404 Not Found", statusCode: 404, err: nil, want: false},

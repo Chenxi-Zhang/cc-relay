@@ -266,8 +266,20 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		h.proxyMu.RLock()
 		pp, ok := h.providerProxies[providerName]
 		h.proxyMu.RUnlock()
-		if ok && pp.KeyPool != nil {
-			skipCircuitBreaker = h.updateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
+		if ok {
+			if pp.KeyPool != nil {
+				skipCircuitBreaker = h.updateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
+			}
+
+			// Handle ZAI 400 with retryable error code 1234 even without a key pool.
+			// This must run outside the key pool check since failover depends on it.
+			if resp.StatusCode == http.StatusBadRequest && providers.IsZAIProvider(pp.Provider.Owner()) {
+				logger := zerolog.Ctx(resp.Request.Context())
+				if h.handleZAI400(resp, pp.KeyPool, pp.Provider, providerName, logger) {
+					// handleZAI400 already reported to circuit breaker — skip generic reporting
+					skipCircuitBreaker = true
+				}
+			}
 		}
 	}
 
@@ -380,6 +392,52 @@ func (h *Handler) handleZAI429(
 	}
 
 	return false
+}
+
+// handleZAI400 handles ZAI-specific 400 error responses.
+// ZAI returns business error codes in 400 responses using the same JSON format as 429:
+//
+//	{"error":{"code":"1234","message":"..."}}
+//
+// Error code 1234 indicates a transient condition that should trigger failover.
+// Other 400 codes are genuine client errors and are not retried.
+// Returns true if the error was handled (circuit breaker already updated).
+func (h *Handler) handleZAI400(
+	resp *http.Response, pool *keypool.KeyPool, prov providers.Provider, providerName string, logger *zerolog.Logger,
+) bool {
+	info, bodyBytes, err := providers.ParseZAIError(resp.Body)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to read ZAI 400 response body")
+		return false
+	}
+
+	// Restore the body so the proxy can still send it to the client
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	resp.ContentLength = int64(len(bodyBytes))
+
+	if info == nil || !providers.IsZAIRetryable400(info.Code) {
+		// Not a retryable error code - let the normal 400 handling proceed
+		return false
+	}
+
+	// Error code 1234: retryable - mark key cooldown + record circuit breaker failure
+	keyID, _ := resp.Request.Context().Value(keyIDContextKey).(string)
+	if pool != nil && keyID != "" {
+		pool.MarkKeyExhausted(keyID, 30*time.Second)
+	}
+
+	if h.healthTracker != nil && providerName != "" {
+		h.healthTracker.RecordFailure(providerName,
+			fmt.Errorf("ZAI retryable 400 [%s]: %s", info.Code, info.Message))
+	}
+
+	logger.Warn().
+		Str("key_id", keyID).
+		Str("zai_error_code", info.Code).
+		Str("zai_error_msg", info.Message).
+		Msg("ZAI retryable 400 error, triggering failover")
+
+	return true
 }
 
 // reportOutcomeWithSkip records success or failure to the circuit breaker.

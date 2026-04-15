@@ -30,6 +30,10 @@ const (
 	ZAIErrAccountLocked    = "1112" // 账户已被锁定 — account locked
 	ZAIErrAccountArrears   = "1113" // 账户已欠费 — account in arrears
 	ZAIErrAccountViolation = "1121" // 账户存违规行为 — account violation
+
+	// Retryable 400 — ZAI returns 400 with this business error code for transient issues
+	// that warrant failover to another provider.
+	ZAIErrRetryable400 = "1234"
 )
 
 // ZAIErrorCategory classifies the severity and recoverability of a ZAI error.
@@ -133,6 +137,40 @@ type zaiErrorDetail struct {
 //
 // The caller must restore resp.Body using the returned bodyBytes.
 func ParseZAI429Error(body io.Reader) (*ZAIErrorInfo, []byte, error) {
+	info, bodyBytes, err := ParseZAIError(body)
+	if err != nil || info == nil {
+		return info, bodyBytes, err
+	}
+
+	// Apply 429-specific post-processing
+	info.Category = classifyZAIError(info.Code)
+	info.IsPermanent = info.Category == ZAICatPermanent
+	info.Cooldown = suggestedCooldown(info.Code)
+
+	// For usage-limit errors (1308), try to extract next_flush_time from the
+	// message text for a precise cooldown instead of the fixed default.
+	if info.Code == ZAIErrUsageLimit {
+		if resetTime := parseResetTimeFromMessage(info.Message); !resetTime.IsZero() {
+			cooldown := time.Until(resetTime)
+			if cooldown > 0 {
+				info.Cooldown = cooldown
+				info.ResetTime = resetTime
+			}
+		}
+	}
+
+	return info, bodyBytes, nil
+}
+
+// ParseZAIError reads the response body and parses a ZAI error code from JSON.
+// This is a general-purpose parser that works for any HTTP status code.
+// Returns:
+//   - (*ZAIErrorInfo, bodyBytes, nil) on successful parse
+//   - (nil, bodyBytes, nil) when body is not a recognizable ZAI error format
+//   - (nil, nil, err) on read failure
+//
+// The caller must restore resp.Body using the returned bodyBytes.
+func ParseZAIError(body io.Reader) (*ZAIErrorInfo, []byte, error) {
 	bodyBytes, err := io.ReadAll(body)
 	if err != nil {
 		return nil, nil, err
@@ -152,29 +190,18 @@ func ParseZAI429Error(body io.Reader) (*ZAIErrorInfo, []byte, error) {
 		Message: resp.Error.Message,
 	}
 
-	info.Category = classifyZAIError(resp.Error.Code)
-	info.IsPermanent = info.Category == ZAICatPermanent
-	info.Cooldown = suggestedCooldown(resp.Error.Code)
-
-	// For usage-limit errors (1308), try to extract next_flush_time from the
-	// message text for a precise cooldown instead of the fixed default.
-	// Message format: "已达到 X 次 的使用上限。您的限额将在 2026-04-14 18:00:00 重置"
-	if info.Code == ZAIErrUsageLimit {
-		if resetTime := parseResetTimeFromMessage(info.Message); !resetTime.IsZero() {
-			cooldown := time.Until(resetTime)
-			if cooldown > 0 {
-				info.Cooldown = cooldown
-				info.ResetTime = resetTime
-			}
-		}
-	}
-
 	return info, bodyBytes, nil
 }
 
 // IsZAIProvider checks if a provider owner string identifies a ZAI (Zhipu) provider.
 func IsZAIProvider(owner string) bool {
 	return owner == ZAIOwner
+}
+
+// IsZAIRetryable400 returns true if the ZAI business error code indicates a retryable
+// condition that warrants failover to another provider, despite the 400 HTTP status code.
+func IsZAIRetryable400(code string) bool {
+	return code == ZAIErrRetryable400
 }
 
 func classifyZAIError(code string) ZAIErrorCategory {

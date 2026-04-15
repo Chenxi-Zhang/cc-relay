@@ -425,3 +425,93 @@ func TestParseResetTimeFromMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestParseZAIError(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantCode string
+		wantMsg  string
+		wantNil  bool
+	}{
+		{
+			name:     "valid error with code",
+			body:     `{"error":{"code":"1234","message":"retryable error"}}`,
+			wantCode: "1234",
+			wantMsg:  "retryable error",
+		},
+		{
+			name:    "no code field",
+			body:    `{"error":{"message":"bad request"}}`,
+			wantNil: true,
+		},
+		{
+			name:    "empty code",
+			body:    `{"error":{"code":"","message":"bad request"}}`,
+			wantNil: true,
+		},
+		{
+			name:    "not json",
+			body:    `plain text`,
+			wantNil: true,
+		},
+		{
+			name:    "empty body",
+			body:    ``,
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, bodyBytes, err := ParseZAIError(strings.NewReader(tt.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantNil {
+				if info != nil {
+					t.Error("expected nil info")
+				}
+			} else {
+				if info == nil {
+					t.Fatal("expected non-nil info")
+				}
+				if info.Code != tt.wantCode {
+					t.Errorf("Code = %q, want %q", info.Code, tt.wantCode)
+				}
+				if info.Message != tt.wantMsg {
+					t.Errorf("Message = %q, want %q", info.Message, tt.wantMsg)
+				}
+			}
+			if string(bodyBytes) != tt.body {
+				t.Errorf("bodyBytes = %q, want %q", string(bodyBytes), tt.body)
+			}
+		})
+	}
+}
+
+func TestParseZAIError_ReadError(t *testing.T) {
+	reader := &errorReader{err: errors.New("read failure")}
+	info, bodyBytes, err := ParseZAIError(reader)
+	if err == nil {
+		t.Fatal("expected error from reader")
+	}
+	if info != nil {
+		t.Error("expected nil info on read error")
+	}
+	if bodyBytes != nil {
+		t.Error("expected nil bodyBytes on read error")
+	}
+}
+
+func TestIsZAIRetryable400(t *testing.T) {
+	if !IsZAIRetryable400(ZAIErrRetryable400) {
+		t.Errorf("IsZAIRetryable400(%q) = false, want true", ZAIErrRetryable400)
+	}
+	if IsZAIRetryable400("1302") {
+		t.Error("IsZAIRetryable400(\"1302\") = true, want false")
+	}
+	if IsZAIRetryable400("") {
+		t.Error("IsZAIRetryable400(\"\") = true, want false")
+	}
+}
