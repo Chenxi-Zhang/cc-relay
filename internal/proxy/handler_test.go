@@ -1335,7 +1335,25 @@ func TestHandlerReportOutcomeFailure429(t *testing.T) {
 	assert.False(t, tracker.IsHealthyFunc(test429ProviderName)())
 }
 
-// TestHandlerReportOutcome4xxNotFailure tests 4xx (except 429) don't count as failures.
+// TestHandler_ReportOutcome_Failure400 tests 400 responses count as failures.
+func TestHandlerReportOutcomeFailure400(t *testing.T) {
+	t.Parallel()
+
+	backend := proxy.NewStatusBackend(t, http.StatusBadRequest, `{"error":"bad_request"}`, nil)
+
+	handler, tracker := newTrackedHandler(t, test400ProviderName, backend.URL, "test", 2)
+
+	// Make multiple requests to trip the circuit
+	for range 3 {
+		rr := serveJSONMessages(t, handler)
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+	}
+
+	// After multiple 400s, circuit should be open (unhealthy)
+	assert.False(t, tracker.IsHealthyFunc(test400ProviderName)())
+}
+
+// TestHandlerReportOutcome4xxNotFailure tests 4xx (except 400 and 429) don't count as failures.
 func TestHandlerReportOutcome4xxNotFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1351,129 +1369,6 @@ func TestHandlerReportOutcome4xxNotFailure(t *testing.T) {
 
 	// 404s should NOT trip the circuit - provider should remain healthy
 	assert.True(t, tracker.IsHealthyFunc(test400ProviderName)())
-}
-
-// newTrackedZAIHandler creates a handler with a ZAI provider and health tracker.
-// This is needed because ZAI-specific error handling checks the provider's owner.
-func newTrackedZAIHandler(
-	t *testing.T,
-	providerName, backendURL string,
-	failureThreshold uint32,
-) (*proxy.Handler, *health.Tracker) {
-	t.Helper()
-
-	provider := providers.NewZAIProvider(providerName, backendURL)
-	logger := zerolog.Nop()
-	tracker := health.NewTracker(health.CircuitBreakerConfig{
-		FailureThreshold: failureThreshold,
-		OpenDurationMS:   0,
-		HalfOpenProbes:   0,
-	}, &logger)
-
-	providerInfos := []router.ProviderInfo{
-		{
-			Provider:  provider,
-			IsHealthy: tracker.IsHealthyFunc(providerName),
-			Weight:    0,
-			Priority:  0,
-		},
-	}
-
-	mockR := &mockRouter{
-		err:  nil,
-		name: "test",
-		selected: router.ProviderInfo{
-			Provider:  provider,
-			IsHealthy: tracker.IsHealthyFunc(providerName),
-			Weight:    0,
-			Priority:  0,
-		},
-	}
-
-	handler, err := proxy.NewHandler(&proxy.HandlerOptions{
-		Provider:          provider,
-		ProviderInfos:     providerInfos,
-		ProviderRouter:    mockR,
-		APIKey:            testKey,
-		ProviderPools:     nil,
-		ProviderInfosFunc: nil,
-		Pool:              nil,
-		ProviderKeys:      nil,
-		GetProviderPools:  nil,
-		GetProviderKeys:   nil,
-		RoutingConfig:     nil,
-		SignatureCache:    nil,
-		DebugOptions: config.DebugOptions{
-			LogRequestBody:     false,
-			LogResponseHeaders: false,
-			LogTLSMetrics:      false,
-			MaxBodyLogSize:     0,
-		},
-		RoutingDebug:  true,
-		HealthTracker: tracker,
-	})
-	require.NoError(t, err)
-	return handler, tracker
-}
-
-const testZAI400ProviderName = "test-zai-400"
-
-// TestHandler_ZAI400_ErrorCode1234_TriggersFailover tests that ZAI 400 with error code 1234
-// is treated as retryable and trips the circuit breaker.
-func TestHandlerZAI400ErrorCode1234TriggersFailover(t *testing.T) {
-	t.Parallel()
-
-	backend := proxy.NewStatusBackend(t, http.StatusBadRequest,
-		`{"error":{"code":"1234","message":"retryable error"}}`, nil)
-
-	handler, tracker := newTrackedZAIHandler(t, testZAI400ProviderName, backend.URL, 2)
-
-	// Make multiple requests to trip the circuit
-	for range 3 {
-		rr := serveJSONMessages(t, handler)
-		assert.Equal(t, http.StatusBadRequest, rr.Code)
-	}
-
-	// After multiple ZAI 400/1234 errors, circuit should be open (unhealthy)
-	assert.False(t, tracker.IsHealthyFunc(testZAI400ProviderName)())
-}
-
-// TestHandler_ZAI400_OtherErrorCode_NoFailover tests that ZAI 400 with non-1234 error codes
-// do NOT trip the circuit breaker.
-func TestHandlerZAI400OtherErrorCodeNoFailover(t *testing.T) {
-	t.Parallel()
-
-	backend := proxy.NewStatusBackend(t, http.StatusBadRequest,
-		`{"error":{"code":"5678","message":"non-retryable error"}}`, nil)
-
-	handler, tracker := newTrackedZAIHandler(t, testZAI400ProviderName, backend.URL, 2)
-
-	// Make multiple requests
-	for range 5 {
-		rr := serveJSONMessages(t, handler)
-		assert.Equal(t, http.StatusBadRequest, rr.Code)
-	}
-
-	// Non-1234 errors should NOT trip the circuit
-	assert.True(t, tracker.IsHealthyFunc(testZAI400ProviderName)())
-}
-
-// TestHandler_ZAI400_NoErrorCode_NoFailover tests that ZAI 400 without error code
-// do NOT trip the circuit breaker.
-func TestHandlerZAI400NoErrorCodeNoFailover(t *testing.T) {
-	t.Parallel()
-
-	backend := proxy.NewStatusBackend(t, http.StatusBadRequest,
-		`{"error":{"message":"bad request without code"}}`, nil)
-
-	handler, tracker := newTrackedZAIHandler(t, testZAI400ProviderName, backend.URL, 2)
-
-	for range 5 {
-		rr := serveJSONMessages(t, handler)
-		assert.Equal(t, http.StatusBadRequest, rr.Code)
-	}
-
-	assert.True(t, tracker.IsHealthyFunc(testZAI400ProviderName)())
 }
 
 // trackingRouter records the providers it receives for selection.

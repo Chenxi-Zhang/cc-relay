@@ -99,14 +99,14 @@ func (t *ConnectionTrigger) Name() string {
 }
 
 // DefaultTriggers returns the standard set of failover triggers:
-//   - 429 (rate limit), 500, 502, 503, 504 status codes
+//   - 400 (bad request), 429 (rate limit), 500, 502, 503, 504 status codes
 //   - Timeout errors (context deadline exceeded)
 //   - Network connection errors
 //
 // This provides sensible defaults for most use cases.
 func DefaultTriggers() []FailoverTrigger {
 	return []FailoverTrigger{
-		NewStatusCodeTrigger(429, 500, 502, 503, 504),
+		NewStatusCodeTrigger(400, 429, 500, 502, 503, 504),
 		NewTimeoutTrigger(),
 		NewConnectionTrigger(),
 	}
