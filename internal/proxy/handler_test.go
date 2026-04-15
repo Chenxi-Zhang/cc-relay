@@ -1335,39 +1335,21 @@ func TestHandlerReportOutcomeFailure429(t *testing.T) {
 	assert.False(t, tracker.IsHealthyFunc(test429ProviderName)())
 }
 
-// TestHandler_ReportOutcome_Failure400 tests 400 responses count as failures.
-func TestHandlerReportOutcomeFailure400(t *testing.T) {
+// TestHandler_ReportOutcome_4xxNotFailure tests 4xx (except 429) don't count as failures.
+func TestHandlerReportOutcome4xxNotFailure(t *testing.T) {
 	t.Parallel()
 
 	backend := proxy.NewStatusBackend(t, http.StatusBadRequest, `{"error":"bad_request"}`, nil)
 
 	handler, tracker := newTrackedHandler(t, test400ProviderName, backend.URL, "test", 2)
 
-	// Make multiple requests to trip the circuit
-	for range 3 {
+	// Make multiple 400 requests
+	for range 5 {
 		rr := serveJSONMessages(t, handler)
 		assert.Equal(t, http.StatusBadRequest, rr.Code)
 	}
 
-	// After multiple 400s, circuit should be open (unhealthy)
-	assert.False(t, tracker.IsHealthyFunc(test400ProviderName)())
-}
-
-// TestHandlerReportOutcome4xxNotFailure tests 4xx (except 400 and 429) don't count as failures.
-func TestHandlerReportOutcome4xxNotFailure(t *testing.T) {
-	t.Parallel()
-
-	backend := proxy.NewStatusBackend(t, http.StatusNotFound, `{"error":"not_found"}`, nil)
-
-	handler, tracker := newTrackedHandler(t, test400ProviderName, backend.URL, "test", 2)
-
-	// Make multiple 404 requests
-	for range 5 {
-		rr := serveJSONMessages(t, handler)
-		assert.Equal(t, http.StatusNotFound, rr.Code)
-	}
-
-	// 404s should NOT trip the circuit - provider should remain healthy
+	// 400s should NOT trip the circuit - provider should remain healthy
 	assert.True(t, tracker.IsHealthyFunc(test400ProviderName)())
 }
 
