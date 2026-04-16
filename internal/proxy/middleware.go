@@ -174,8 +174,18 @@ func logRequestCompletion(
 	switch {
 	case wrapped.statusCode >= 500:
 		logger.Error().Msg(completionMsg)
+		if wrapped.bodyBuf.Len() > 0 {
+			logger.Debug().
+				Str("response_body", wrapped.bodyBuf.String()).
+				Msg("Error response body")
+		}
 	case wrapped.statusCode >= 400:
 		logger.Warn().Msg(completionMsg)
+		if wrapped.bodyBuf.Len() > 0 {
+			logger.Debug().
+				Str("response_body", wrapped.bodyBuf.String()).
+				Msg("Error response body")
+		}
 	default:
 		logger.Info().Msg(completionMsg)
 	}
@@ -474,6 +484,8 @@ type responseWriter struct {
 	sseEvents    int
 	isStreaming  bool
 	providerName string
+	bodyBuf      bytes.Buffer // captures response body for error responses
+	captureBody  bool         // true when statusCode >= 400
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -482,11 +494,19 @@ func (rw *responseWriter) WriteHeader(code int) {
 	if rw.Header().Get("Content-Type") == providers.ContentTypeSSE {
 		rw.isStreaming = true
 	}
+	// Capture body for error responses (4xx/5xx)
+	if code >= 400 && !rw.isStreaming {
+		rw.captureBody = true
+	}
 	rw.ResponseWriter.WriteHeader(code)
 }
 
 // Write intercepts writes to count SSE events.
 func (rw *responseWriter) Write(data []byte) (int, error) {
+	// Capture body for error responses
+	if rw.captureBody {
+		rw.bodyBuf.Write(data)
+	}
 	// Count SSE events if streaming
 	if rw.isStreaming {
 		// Count occurrences of "event:" prefix in the data
