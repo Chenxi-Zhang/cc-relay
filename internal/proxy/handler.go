@@ -311,7 +311,52 @@ func (h *Handler) updateKeyPoolFromResponse(
 			Msg("key hit rate limit, marking cooldown")
 	}
 
+	// Handle 400 from backend for ZAI provider
+	if resp.StatusCode == http.StatusBadRequest && providers.IsZAIProvider(prov.Owner()) {
+		return h.handleZAI400(resp, pool, keyID, logger)
+	}
+
 	return false
+}
+
+// handleZAI400 handles ZAI-specific 400 error responses.
+// ZAI returns business error codes in the response body, same format as 429:
+//
+//	{"error":{"code":"1234","message":"..."}}
+//
+// For code 1234, the key is marked exhausted with a short cooldown (retryable).
+// For all other 400 error codes, the response is passed through unchanged.
+// Returns true if the error is a retryable 400 (circuit breaker should skip).
+func (h *Handler) handleZAI400(
+	resp *http.Response, pool *keypool.KeyPool, keyID string, logger *zerolog.Logger,
+) bool {
+	// Read the response body to parse the ZAI error code.
+	info, bodyBytes, err := providers.ParseZAI429Error(resp.Body)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to read ZAI 400 response body")
+		return false
+	}
+
+	// Restore the body so the proxy can still send it to the client
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	resp.ContentLength = int64(len(bodyBytes))
+
+	if info == nil || !providers.IsZAIRetryable400Code(info.Code) {
+		// Not a retryable 400 — pass through unchanged
+		return false
+	}
+
+	// Code 1234: retryable — mark key exhausted with short cooldown
+	cooldown := 30 * time.Second
+	pool.MarkKeyExhausted(keyID, cooldown)
+	logger.Warn().
+		Str("key_id", keyID).
+		Str("zai_error_code", info.Code).
+		Str("zai_error_msg", info.Message).
+		Dur("cooldown", cooldown).
+		Msg("ZAI retryable 400 error, marking key cooldown")
+
+	return true // Skip circuit breaker — this is a transient issue
 }
 
 // handleZAI429 handles ZAI-specific 429 error responses with fine-grained error code parsing.

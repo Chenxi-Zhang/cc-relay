@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// ZAI (Zhipu AI) business error codes returned in 429 responses.
+// ZAI (Zhipu AI) business error codes returned in 429/400 responses.
 // These codes provide fine-grained information about the rate limit cause.
 // Reference: https://docs.bigmodel.cn/cn/faq/api-code
 const (
@@ -30,6 +30,9 @@ const (
 	ZAIErrAccountLocked    = "1112" // 账户已被锁定 — account locked
 	ZAIErrAccountArrears   = "1113" // 账户已欠费 — account in arrears
 	ZAIErrAccountViolation = "1121" // 账户存违规行为 — account violation
+
+	// Retryable 400 errors — returned as HTTP 400 but should be retried with cooldown.
+	ZAIErrRetryable400 = "1234" // 可重试的400错误 — retryable bad request
 )
 
 // ZAIErrorCategory classifies the severity and recoverability of a ZAI error.
@@ -105,6 +108,8 @@ func (info *ZAIErrorInfo) Description() string {
 	case ZAIErrAccountViolation:
 		return "ZAI: Account has policy violations and has been locked. " +
 			"Please contact service@zhipuai.cn."
+	case ZAIErrRetryable400:
+		return "ZAI: Retryable bad request error. Please retry after cooldown."
 	default:
 		if info.Message != "" {
 			return "ZAI: " + info.Message
@@ -123,6 +128,12 @@ type zaiErrorResponse struct {
 type zaiErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// IsZAIRetryable400Code returns true if the given ZAI error code represents a
+// retryable 400 error that should trigger key cooldown and retry logic.
+func IsZAIRetryable400Code(code string) bool {
+	return code == ZAIErrRetryable400
 }
 
 // ParseZAI429Error reads the response body and attempts to parse a ZAI error code.
@@ -179,7 +190,8 @@ func IsZAIProvider(owner string) bool {
 
 func classifyZAIError(code string) ZAIErrorCategory {
 	switch code {
-	case ZAIErrConcurrentLimit, ZAIErrFrequencyLimit, ZAIErrTrafficLimit, ZAIErrModelOverloaded:
+	case ZAIErrConcurrentLimit, ZAIErrFrequencyLimit, ZAIErrTrafficLimit, ZAIErrModelOverloaded,
+		ZAIErrRetryable400:
 		return ZAICatTransient
 	case ZAIErrDailyCallLimit, ZAIErrUsageLimit, ZAIErrPeriodicLimit:
 		return ZAICatQuotaExhausted
@@ -201,6 +213,8 @@ func suggestedCooldown(code string) time.Duration {
 		return 1 * time.Hour // cap at 1h, will retry hourly
 	case ZAIErrTrafficLimit, ZAIErrModelOverloaded:
 		return 2 * time.Minute
+	case ZAIErrRetryable400:
+		return 30 * time.Second
 	case ZAIErrUsageLimit:
 		return 5 * time.Hour // fallback; overridden by parsed next_flush_time
 	case ZAIErrPeriodicLimit:
