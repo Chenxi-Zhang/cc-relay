@@ -383,7 +383,7 @@ func (h *Handler) handleZAI200(
 	resp *http.Response, pool *keypool.KeyPool, keyID string, logger *zerolog.Logger,
 ) bool {
 	// Peek first byte: '{' means JSON error body, anything else is a normal response.
-	buf := make([]byte, 100)
+	buf := make([]byte, 300)
 	n, err := resp.Body.Read(buf)
 	if n == 0 || err != nil {
 		if err != nil && err != io.EOF {
