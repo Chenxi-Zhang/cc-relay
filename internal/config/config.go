@@ -94,6 +94,128 @@ type RoutingConfig struct {
 	// Debug enables routing debug headers (X-CC-Relay-Provider, X-CC-Relay-Strategy).
 	// Useful for debugging routing decisions but may leak internal info.
 	Debug bool `yaml:"debug" toml:"debug"`
+
+	// Retry configures the three-level 429 retry mechanism.
+	// When enabled, a 429 response triggers retries at three levels:
+	//   1. Same key retry (wait briefly, retry with same key)
+	//   2. Same provider, different key (pick a new key from the pool)
+	//   3. Different provider (switch to an alternate provider)
+	// Disabled by default.
+	Retry RetryConfig `yaml:"retry" toml:"retry"`
+}
+
+// RetryConfig configures the three-level 429 retry mechanism.
+//
+// The retry levels are executed in order:
+//
+//	Level 1 (same_key_retries): Wait briefly and retry the same key.
+//	  Best for transient rate limits (concurrent request conflicts).
+//	Level 2 (key_retries): Keep the same provider but pick a different key.
+//	  Best when one key's quota is exhausted but others still have capacity.
+//	Level 3 (provider_retries): Switch to a completely different provider.
+//	  Best when an entire provider is rate-limiting all keys.
+//
+// All levels are bounded by max_total_attempts as a safety limit.
+type RetryConfig struct {
+	// Enabled controls whether the retry mechanism is active.
+	// When false, 429 responses are forwarded to the client immediately.
+	Enabled bool `yaml:"enabled" toml:"enabled"`
+
+	// Level 1: Same key retry.
+	// On transient 429 (e.g. concurrent request conflict), wait briefly and retry
+	// the same key. The 429 error category determines whether this level is used:
+	//   - Transient errors (ZAI 1302/1303/1305/1312): eligible for same-key retry
+	//   - QuotaExhausted/Permanent errors: skip directly to Level 2
+
+	// SameKeyRetries is how many times to retry with the same key after the initial attempt.
+	// Default: 1 (total of 2 attempts with the same key).
+	SameKeyRetries int `yaml:"same_key_retries" toml:"same_key_retries"`
+
+	// SameKeyBackoffSec is the seconds to wait before retrying the same key.
+	// The actual wait is min(same_key_backoff_sec, Retry-After header, 5s cap).
+	// Default: 2s.
+	SameKeyBackoffSec int `yaml:"same_key_backoff_sec" toml:"same_key_backoff_sec"`
+
+	// Level 2: Same provider, different key.
+	// The exhausted key is marked with a cooldown, and a new key is selected from the pool.
+
+	// KeyRetries is how many different keys to try within the same provider.
+	// Default: 2 (try up to 2 additional keys).
+	KeyRetries int `yaml:"key_retries" toml:"key_retries"`
+
+	// Level 3: Different provider.
+	// Switch to an alternate provider and retry Levels 1-2 with it.
+
+	// ProviderRetries is how many different providers to try.
+	// Default: 1 (try up to 1 additional provider).
+	ProviderRetries int `yaml:"provider_retries" toml:"provider_retries"`
+
+	// ProviderBackoffSec is the seconds to wait before switching providers.
+	// Default: 2s.
+	ProviderBackoffSec int `yaml:"provider_backoff_sec" toml:"provider_backoff_sec"`
+
+	// MaxTotalAttempts is the absolute safety limit on total attempts for a single request.
+	// Regardless of the level-specific retry counts, the total will not exceed this value.
+	// Default: 5.
+	MaxTotalAttempts int `yaml:"max_total_attempts" toml:"max_total_attempts"`
+}
+
+// Retry config default values.
+const (
+	DefaultSameKeyRetries     = 1
+	DefaultSameKeyBackoffSec  = 2
+	DefaultKeyRetries         = 2
+	DefaultProviderRetries    = 1
+	DefaultProviderBackoffSec = 2
+	DefaultMaxTotalAttempts   = 5
+)
+
+// GetSameKeyRetries returns the configured same-key retries or the default.
+func (c RetryConfig) GetSameKeyRetries() int {
+	if c.SameKeyRetries <= 0 {
+		return DefaultSameKeyRetries
+	}
+	return c.SameKeyRetries
+}
+
+// GetSameKeyBackoff returns the same-key backoff duration or the default.
+func (c RetryConfig) GetSameKeyBackoff() time.Duration {
+	if c.SameKeyBackoffSec <= 0 {
+		return time.Duration(DefaultSameKeyBackoffSec) * time.Second
+	}
+	return time.Duration(c.SameKeyBackoffSec) * time.Second
+}
+
+// GetKeyRetries returns the configured key-level retries or the default.
+func (c RetryConfig) GetKeyRetries() int {
+	if c.KeyRetries <= 0 {
+		return DefaultKeyRetries
+	}
+	return c.KeyRetries
+}
+
+// GetProviderRetries returns the configured provider-level retries or the default.
+func (c RetryConfig) GetProviderRetries() int {
+	if c.ProviderRetries <= 0 {
+		return DefaultProviderRetries
+	}
+	return c.ProviderRetries
+}
+
+// GetProviderBackoff returns the provider switch backoff duration or the default.
+func (c RetryConfig) GetProviderBackoff() time.Duration {
+	if c.ProviderBackoffSec <= 0 {
+		return time.Duration(DefaultProviderBackoffSec) * time.Second
+	}
+	return time.Duration(c.ProviderBackoffSec) * time.Second
+}
+
+// GetMaxTotalAttempts returns the maximum total attempts safety limit or the default.
+func (c RetryConfig) GetMaxTotalAttempts() int {
+	if c.MaxTotalAttempts <= 0 {
+		return DefaultMaxTotalAttempts
+	}
+	return c.MaxTotalAttempts
 }
 
 // GetEffectiveStrategy returns the routing strategy with default fallback.

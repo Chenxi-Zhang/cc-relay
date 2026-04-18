@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"strconv"
 	"sync"
@@ -243,6 +244,13 @@ func (h *Handler) getDebugOptions() config.DebugOptions {
 	return h.debugOpts
 }
 
+func (h *Handler) getRetryConfig() config.RetryConfig {
+	if rc := h.getRoutingConfig(); rc != nil {
+		return rc.Retry
+	}
+	return config.RetryConfig{}
+}
+
 func (h *Handler) isRoutingDebugEnabled() bool {
 	if cfg := h.getRuntimeConfigGetter(); cfg != nil {
 		return cfg.Routing.IsDebugEnabled()
@@ -375,7 +383,7 @@ func (h *Handler) handleZAI200(
 	resp *http.Response, pool *keypool.KeyPool, keyID string, logger *zerolog.Logger,
 ) bool {
 	// Peek first byte: '{' means JSON error body, anything else is a normal response.
-	buf := make([]byte, 1)
+	buf := make([]byte, 100)
 	n, err := resp.Body.Read(buf)
 	if n == 0 || err != nil {
 		if err != nil && err != io.EOF {
@@ -383,6 +391,8 @@ func (h *Handler) handleZAI200(
 		}
 		return false
 	}
+	peekedBuf := buf[0:n]
+	logger.Debug().Msg(string(peekedBuf))
 	if buf[0] != '{' {
 		// Not JSON — normal response. Restore the peeked byte.
 		resp.Body = struct {
@@ -793,6 +803,8 @@ func (h *Handler) selectKeyFromPool(
 }
 
 // ServeHTTP handles the proxy request.
+// When retry is enabled and the request is non-streaming, delegates to serveWithRetry
+// for three-level 429 retry (same-key → different-key → different-provider).
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	start := time.Now()
 
@@ -802,6 +814,22 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	request = prep.request
 
+	retryCfg := h.getRetryConfig()
+
+	// Use retry path only when enabled, non-streaming, and multiple providers available.
+	if retryCfg.Enabled && !isStreamingRequest(request) {
+		h.serveWithRetry(writer, request, prep, retryCfg, start)
+		return
+	}
+
+	h.serveDirect(writer, request, prep, start)
+}
+
+// serveDirect is the original non-retry proxy path.
+func (h *Handler) serveDirect(
+	writer http.ResponseWriter, request *http.Request,
+	prep requestPrep, start time.Time,
+) {
 	selected, release, err := h.selectProviderWithTracking(request.Context(), prep.model, prep.hasThinking)
 	if err != nil {
 		WriteError(writer, http.StatusServiceUnavailable, "api_error",
@@ -824,6 +852,172 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	backendTime := time.Since(backendStart)
 
 	h.logMetricsIfEnabled(proxyCtx.request, &proxyCtx.logger, start, backendTime, proxyCtx.getTLSMetrics)
+}
+
+// serveWithRetry implements three-level 429 retry.
+//
+//	Level 1: same key retry (transient 429 only)
+//	Level 2: same provider, different key
+//	Level 3: different provider
+//
+// Uses httptest.ResponseRecorder to buffer each attempt so that only the final
+// response is flushed to the real writer.
+func (h *Handler) serveWithRetry(
+	writer http.ResponseWriter, request *http.Request,
+	prep requestPrep, retryCfg config.RetryConfig, start time.Time,
+) {
+	rc := newRetryContext()
+	var lastRecorder *httptest.ResponseRecorder
+
+	for providerAttempt := 0; providerAttempt <= retryCfg.GetProviderRetries(); providerAttempt++ {
+		// --- Provider selection (excluding previously failed) ---
+		selected, release, err := h.selectProviderExcluding(
+			request.Context(), prep.model, prep.hasThinking, rc,
+		)
+		if err != nil {
+			if lastRecorder != nil {
+				flushRecorder(lastRecorder, writer)
+				return
+			}
+			WriteError(writer, http.StatusServiceUnavailable, "api_error",
+				fmt.Sprintf("failed to select provider: %v", err))
+			return
+		}
+		if release != nil {
+			defer release()
+		}
+
+		providerName := selected.Provider.Name()
+
+		// Get provider proxy for key pool access
+		providerProxy, proxyErr := h.getOrCreateProxy(selected.Provider)
+		if proxyErr != nil {
+			if lastRecorder != nil {
+				flushRecorder(lastRecorder, writer)
+				return
+			}
+			WriteError(writer, http.StatusInternalServerError, "internal_error",
+				fmt.Sprintf("failed to get proxy for provider %s: %v", providerName, proxyErr))
+			return
+		}
+
+		// --- Key retry loop ---
+		for keyAttempt := 0; keyAttempt <= retryCfg.GetKeyRetries(); keyAttempt++ {
+			var keyID, selectedKey string
+			var keyReq *http.Request
+			var keyOK bool
+
+			if providerProxy.KeyPool != nil {
+				keyID, selectedKey, keyReq, keyOK = h.selectKeyFromPoolExcluding(
+					request, providerProxy.KeyPool, providerName, rc,
+				)
+				if !keyOK {
+					// No available keys in this provider — try next provider
+					break
+				}
+				keyReq.Header.Set("X-Selected-Key", selectedKey)
+			} else {
+				// Single key mode — use provider's API key
+				keyID = "default"
+				selectedKey = providerProxy.APIKey
+				keyReq = request.WithContext(context.WithValue(request.Context(), keyIDContextKey, keyID))
+				keyReq.Header.Set("X-Selected-Key", selectedKey)
+				keyOK = true
+			}
+
+			// --- Same-key retry loop ---
+			for sameKeyAttempt := 0; sameKeyAttempt <= retryCfg.GetSameKeyRetries(); sameKeyAttempt++ {
+				if !rc.canRetry(retryCfg) {
+					break
+				}
+
+				// Backoff before same-key retry (not on first attempt)
+				if sameKeyAttempt > 0 {
+					backoff := rc.sameKeyBackoff(retryCfg)
+					time.Sleep(backoff)
+				}
+
+				// Build per-attempt context with provider name and key ID
+				attemptReq := keyReq.WithContext(context.WithValue(
+					keyReq.Context(), providerNameContextKey, providerName,
+				))
+
+				// Create logger for this attempt
+				logger := h.createProviderLoggerWithProvider(attemptReq, selected.Provider)
+				attemptReq = attemptReq.WithContext(logger.WithContext(attemptReq.Context()))
+				h.logAndSetDebugHeaders(writer, attemptReq, &logger, selected.Provider)
+				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
+				attemptReq, getTLSMetrics := h.attachTLSTraceIfEnabled(attemptReq)
+
+				// Buffer response via ResponseRecorder
+				recorder := httptest.NewRecorder()
+				SetProviderNameOnWriter(recorder, providerName)
+				rc.recordAttempt(providerName, keyID)
+
+				backendStart := time.Now()
+				serveReverseProxy(providerProxy.Proxy, recorder, attemptReq)
+				backendTime := time.Since(backendStart)
+				lastRecorder = recorder
+
+				h.logMetricsIfEnabled(attemptReq, &logger, start, backendTime, getTLSMetrics)
+
+				// Non-429 → success or non-retryable error, flush immediately
+				if recorder.Code != http.StatusTooManyRequests {
+					flushRecorder(recorder, writer)
+					return
+				}
+
+				// --- 429 received ---
+				// modifyResponse already ran during serveReverseProxy, which
+				// called updateKeyPoolFromResponse → MarkKeyExhausted / MarkKeyUnhealthy.
+				// Now decide whether to retry at Level 1 (same key) or escalate.
+
+				// Parse Retry-After from the buffered response for backoff calculation
+				rc.lastRetryAfter = parseRetryAfter(recorder.Header())
+
+				// Check if 429 is transient → eligible for same-key retry
+				if !rc.isTransient429(selected.Provider) {
+					// QuotaExhausted or Permanent — same-key retry won't help
+					logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+						recorder.Code, "L1_skip", "non-transient 429, escalating to next key")
+					break // exit same-key loop → try different key
+				}
+
+				logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+					recorder.Code, "L1", "transient 429, same-key retry")
+			}
+
+			// Same-key retries exhausted for this key — exclude it
+			rc.excludeKey(providerName, keyID)
+
+			if !rc.canRetry(retryCfg) {
+				break
+			}
+		}
+
+		// Key retries exhausted for this provider — exclude it
+		rc.excludeProvider(providerName)
+
+		if !rc.canRetry(retryCfg) {
+			break
+		}
+
+		// Backoff before switching provider
+		if providerAttempt < retryCfg.GetProviderRetries() {
+			time.Sleep(retryCfg.GetProviderBackoff())
+		}
+	}
+
+	// All retry levels exhausted — return last 429 to client
+	if lastRecorder != nil {
+		logger := zerolog.Ctx(request.Context())
+		logRetryExhausted(logger, rc.attemptCount, rc.triedProviders, rc.triedKeys)
+		flushRecorder(lastRecorder, writer)
+		return
+	}
+
+	// Should not reach here normally — no attempt was made
+	WriteError(writer, http.StatusServiceUnavailable, "api_error", "no providers available for retry")
 }
 
 // serveReverseProxy forwards the request via the pre-configured reverse proxy.
