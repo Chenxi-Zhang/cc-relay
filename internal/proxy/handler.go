@@ -727,9 +727,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	retryCfg := h.getRetryConfig()
 
-	// Use retry path only when enabled, non-streaming, and multiple providers available.
-	if retryCfg.Enabled && !isStreamingRequest(request) {
-		h.serveWithRetry(writer, request, prep, retryCfg, start)
+	// Use retry path when enabled. Streaming requests use serveStreamingWithRetry
+	// which buffers only 429 responses; non-streaming uses serveWithRetry.
+	if retryCfg.Enabled {
+		if isStreamingRequest(request) {
+			h.serveStreamingWithRetry(writer, request, prep, retryCfg, start)
+		} else {
+			h.serveWithRetry(writer, request, prep, retryCfg, start)
+		}
 		return
 	}
 
@@ -805,7 +810,8 @@ func (h *Handler) serveWithRetry(
 		)
 		if err != nil {
 			if lastRecorder != nil {
-				flushRecorder(lastRecorder, writer)
+				overrideRetryAfter(lastRecorder.Header())
+		flushRecorder(lastRecorder, writer)
 				return
 			}
 			WriteError(writer, http.StatusServiceUnavailable, "api_error",
@@ -822,7 +828,8 @@ func (h *Handler) serveWithRetry(
 		providerProxy, proxyErr := h.getOrCreateProxy(selected.Provider)
 		if proxyErr != nil {
 			if lastRecorder != nil {
-				flushRecorder(lastRecorder, writer)
+				overrideRetryAfter(lastRecorder.Header())
+		flushRecorder(lastRecorder, writer)
 				return
 			}
 			WriteError(writer, http.StatusInternalServerError, "internal_error",
@@ -947,12 +954,190 @@ func (h *Handler) serveWithRetry(
 	if lastRecorder != nil {
 		logger := zerolog.Ctx(request.Context())
 		logRetryExhausted(logger, rc.attemptCount, rc.triedProviders, rc.triedKeys)
+		overrideRetryAfter(lastRecorder.Header())
 		flushRecorder(lastRecorder, writer)
 		return
 	}
 
 	// Should not reach here normally — no attempt was made
 	WriteError(writer, http.StatusServiceUnavailable, "api_error", "no providers available for retry")
+}
+
+// serveStreamingWithRetry implements three-level 429 retry for streaming requests.
+//
+// Uses peekWriter instead of httptest.ResponseRecorder: 429 responses are buffered
+// (small JSON errors), while 200 streaming responses are committed immediately to the
+// real writer and stream directly with no added latency.
+//
+// Once a 200 response is committed (SSE streaming starts), the method returns
+// immediately — no further retries are possible.
+func (h *Handler) serveStreamingWithRetry(
+	writer http.ResponseWriter, request *http.Request,
+	prep requestPrep, retryCfg config.RetryConfig, start time.Time,
+) {
+	rc := newRetryContext()
+	var lastPeek *peekWriter
+
+	// Buffer request body for retries.
+	var bodyBytes []byte
+	if request.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(request.Body)
+		request.Body.Close()
+		if err != nil {
+			WriteError(writer, http.StatusInternalServerError, "internal_error",
+				"failed to buffer request body for streaming retry")
+			return
+		}
+		request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		request.ContentLength = int64(len(bodyBytes))
+	}
+
+	for providerAttempt := 0; providerAttempt <= retryCfg.GetProviderRetries(); providerAttempt++ {
+		selected, release, err := h.selectProviderExcluding(
+			request.Context(), prep.model, prep.hasThinking, rc,
+		)
+		if err != nil {
+			if lastPeek != nil {
+				overrideRetryAfter(lastPeek.Header())
+				lastPeek.FlushBuffered429()
+				return
+			}
+			WriteError(writer, http.StatusServiceUnavailable, "api_error",
+				fmt.Sprintf("failed to select provider: %v", err))
+			return
+		}
+		if release != nil {
+			defer release()
+		}
+
+		providerName := selected.Provider.Name()
+
+		providerProxy, proxyErr := h.getOrCreateProxy(selected.Provider)
+		if proxyErr != nil {
+			if lastPeek != nil {
+				overrideRetryAfter(lastPeek.Header())
+				lastPeek.FlushBuffered429()
+				return
+			}
+			WriteError(writer, http.StatusInternalServerError, "internal_error",
+				fmt.Sprintf("failed to get proxy for provider %s: %v", providerName, proxyErr))
+			return
+		}
+
+		// Set provider name once on the real writer for logging middleware.
+		SetProviderNameOnWriter(writer, providerName)
+
+		for keyAttempt := 0; keyAttempt <= retryCfg.GetKeyRetries(); keyAttempt++ {
+			var keyID, selectedKey string
+			var keyReq *http.Request
+			var keyOK bool
+
+			if providerProxy.KeyPool != nil {
+				keyID, selectedKey, keyReq, keyOK = h.selectKeyFromPoolExcluding(
+					request, providerProxy.KeyPool, providerName, rc,
+				)
+				if !keyOK {
+					break
+				}
+				keyReq.Header.Set("X-Selected-Key", selectedKey)
+			} else {
+				keyID = "default"
+				selectedKey = providerProxy.APIKey
+				keyReq = request.WithContext(context.WithValue(request.Context(), keyIDContextKey, keyID))
+				keyReq.Header.Set("X-Selected-Key", selectedKey)
+				keyOK = true
+			}
+
+			for sameKeyAttempt := 0; sameKeyAttempt <= retryCfg.GetSameKeyRetries(); sameKeyAttempt++ {
+				if !rc.canRetry(retryCfg) {
+					break
+				}
+
+				if sameKeyAttempt > 0 {
+					backoff := rc.sameKeyBackoff(retryCfg)
+					time.Sleep(backoff)
+				}
+
+				attemptReq := keyReq.WithContext(context.WithValue(
+					keyReq.Context(), providerNameContextKey, providerName,
+				))
+
+				logger := h.createProviderLoggerWithProvider(attemptReq, selected.Provider)
+				attemptReq = attemptReq.WithContext(logger.WithContext(attemptReq.Context()))
+				h.logAndSetDebugHeaders(writer, attemptReq, &logger, selected.Provider)
+				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
+				attemptReq, getTLSMetrics := h.attachTLSTraceIfEnabled(attemptReq)
+
+				// Reset body for this attempt (ReverseProxy consumes Body)
+				if bodyBytes != nil {
+					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					attemptReq.ContentLength = int64(len(bodyBytes))
+				}
+
+				pw := newPeekWriter(writer)
+				rc.recordAttempt(providerName, keyID)
+
+				backendStart := time.Now()
+				serveReverseProxy(providerProxy.Proxy, pw, attemptReq)
+				backendTime := time.Since(backendStart)
+
+				h.logMetricsIfEnabled(attemptReq, &logger, start, backendTime, getTLSMetrics)
+
+				// 200 streaming response already committed to real writer — return immediately.
+				if pw.IsCommitted() {
+					return
+				}
+
+				// Non-429, non-streaming (e.g., 400, 500) — commit buffered response.
+				if !pw.Is429() {
+					pw.FlushBuffered429()
+					return
+				}
+
+				// --- 429 received (still buffered) ---
+				lastPeek = pw
+
+				rc.lastRetryAfter = parseRetryAfter(pw.Header())
+
+				if !rc.isTransient429(selected.Provider) {
+					logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+						pw.Status(), "L1_skip", "non-transient 429, escalating to next key")
+					break
+				}
+
+				logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+					pw.Status(), "L1", "transient 429, streaming same-key retry")
+			}
+
+			rc.excludeKey(providerName, keyID)
+
+			if !rc.canRetry(retryCfg) {
+				break
+			}
+		}
+
+		rc.excludeProvider(providerName)
+
+		if !rc.canRetry(retryCfg) {
+			break
+		}
+
+		if providerAttempt < retryCfg.GetProviderRetries() {
+			time.Sleep(retryCfg.GetProviderBackoff())
+		}
+	}
+
+	// All retries exhausted — return last 429 to client
+	if lastPeek != nil {
+		logger := zerolog.Ctx(request.Context())
+		logRetryExhausted(logger, rc.attemptCount, rc.triedProviders, rc.triedKeys)
+		overrideRetryAfter(lastPeek.Header())
+		lastPeek.FlushBuffered429()
+		return
+	}
+
+	WriteError(writer, http.StatusServiceUnavailable, "api_error", "no providers available for streaming retry")
 }
 
 // serveReverseProxy forwards the request via the pre-configured reverse proxy.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,19 @@ import (
 	"github.com/omarluq/cc-relay/internal/providers"
 	"github.com/omarluq/cc-relay/internal/router"
 )
+
+// ClientRetryAfterSec is the Retry-After value returned to clients when all
+// retry attempts are exhausted. cc-relay has multiple keys and providers, so
+// even if one request exhausted all options, the next request may find
+// available capacity. A short Retry-After lets the client retry quickly while
+// cc-relay handles key cooldown internally.
+const ClientRetryAfterSec = 2
+
+// overrideRetryAfter replaces the Retry-After header in hdr with a short value
+// so the client retries quickly instead of waiting for a single key's cooldown.
+func overrideRetryAfter(hdr http.Header) {
+	hdr.Set("Retry-After", strconv.Itoa(ClientRetryAfterSec))
+}
 
 // retryContext tracks state across retry attempts within a single request.
 type retryContext struct {
