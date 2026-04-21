@@ -324,13 +324,6 @@ func (h *Handler) updateKeyPoolFromResponse(
 		return h.handleZAI400(resp, pool, keyID, logger)
 	}
 
-	// Handle ZAI 200 responses that embed business error codes.
-	// ZAI returns HTTP 200 with {"error":{"code":"1234",...}} even for SSE requests.
-	// The first byte differentiates: '{' = JSON error, anything else = normal response.
-	if resp.StatusCode == http.StatusOK && providers.IsZAIProvider(prov.Owner()) {
-		return h.handleZAI200(resp, pool, keyID, logger)
-	}
-
 	return false
 }
 
@@ -372,88 +365,6 @@ func (h *Handler) handleZAI400(
 		Msg("ZAI retryable 400 error, marking key cooldown")
 
 	return true // Skip circuit breaker — this is a transient issue
-}
-
-// handleZAI200 handles ZAI 200 responses that embed business error codes.
-// ZAI returns HTTP 200 with {"error":{"code":"1234",...}} even for SSE requests.
-// Uses a 1-byte peek to avoid parsing large streaming bodies: '{' = JSON error body,
-// anything else = normal response (SSE starts with 'e' from "event:").
-// Returns true if the error is a permanent key issue (circuit breaker should skip).
-func (h *Handler) handleZAI200(
-	resp *http.Response, pool *keypool.KeyPool, keyID string, logger *zerolog.Logger,
-) bool {
-	// Peek first byte: '{' means JSON error body, anything else is a normal response.
-	buf := make([]byte, 300)
-	n, err := resp.Body.Read(buf)
-	if n == 0 || err != nil {
-		if err != nil && err != io.EOF {
-			logger.Warn().Err(err).Msg("failed to peek ZAI 200 response body")
-		}
-		return false
-	}
-	peekedBuf := buf[0:n]
-	logger.Debug().Msg(string(peekedBuf))
-	if buf[0] != '{' {
-		// Not JSON — normal response. Restore the peeked byte.
-		resp.Body = struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: io.MultiReader(bytes.NewReader(buf), resp.Body),
-			Closer: resp.Body,
-		}
-		return false
-	}
-
-	// First byte is '{' — likely a JSON error body. Read the full body.
-	rest, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to read ZAI 200 response body after peek")
-		return false
-	}
-	bodyBytes := append(buf, rest...)
-
-	// Parse the ZAI error code (also returns bodyBytes for restoration)
-	info, parsedBody, err := providers.ParseZAI429Error(bytes.NewReader(bodyBytes))
-	if err != nil {
-		// On parse error, still restore body for the client
-		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		resp.ContentLength = int64(len(bodyBytes))
-		logger.Warn().Err(err).Msg("failed to parse ZAI 200 response body")
-		return false
-	}
-
-	// Restore body so the proxy can still send it to the client
-	resp.Body = io.NopCloser(bytes.NewReader(parsedBody))
-	resp.ContentLength = int64(len(parsedBody))
-
-	if info == nil {
-		return false // 200 with JSON but no error code — normal response
-	}
-
-	event := logger.Warn().
-		Str("key_id", keyID).
-		Str("zai_error_code", info.Code).
-		Str("zai_error_msg", info.Message).
-		Str("category", info.Category.String()).
-		Str("content_type", resp.Header.Get("Content-Type"))
-
-	switch info.Category {
-	case providers.ZAICatTransient:
-		pool.MarkKeyExhausted(keyID, info.Cooldown)
-		event.Dur("cooldown", info.Cooldown).
-			Msg("ZAI transient error in 200 response, marking key cooldown")
-	case providers.ZAICatQuotaExhausted:
-		pool.MarkKeyExhausted(keyID, info.Cooldown)
-		event.Dur("cooldown", info.Cooldown).
-			Msg("ZAI quota exhausted in 200 response, marking key long cooldown")
-	case providers.ZAICatPermanent:
-		pool.MarkKeyUnhealthy(keyID, fmt.Errorf("ZAI permanent error [%s]: %s", info.Code, info.Message))
-		event.Msg("ZAI permanent error in 200 response, marking key unhealthy")
-		return true // Skip circuit breaker — provider is fine, key is the problem
-	}
-
-	return false
 }
 
 // handleZAI429 handles ZAI-specific 429 error responses with fine-grained error code parsing.
@@ -869,6 +780,24 @@ func (h *Handler) serveWithRetry(
 	rc := newRetryContext()
 	var lastRecorder *httptest.ResponseRecorder
 
+	// Buffer request body for retries.
+	// httputil.ReverseProxy consumes the Body on each attempt, and
+	// request.WithContext shares the Body field. Without buffering,
+	// retry attempts send an empty body (422 "Field required").
+	var bodyBytes []byte
+	if request.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(request.Body)
+		request.Body.Close()
+		if err != nil {
+			WriteError(writer, http.StatusInternalServerError, "internal_error",
+				"failed to buffer request body for retry")
+			return
+		}
+		request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		request.ContentLength = int64(len(bodyBytes))
+	}
+
 	for providerAttempt := 0; providerAttempt <= retryCfg.GetProviderRetries(); providerAttempt++ {
 		// --- Provider selection (excluding previously failed) ---
 		selected, release, err := h.selectProviderExcluding(
@@ -953,6 +882,12 @@ func (h *Handler) serveWithRetry(
 				recorder := httptest.NewRecorder()
 				SetProviderNameOnWriter(recorder, providerName)
 				rc.recordAttempt(providerName, keyID)
+
+				// Reset body for this attempt (ReverseProxy consumes Body)
+				if bodyBytes != nil {
+					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					attemptReq.ContentLength = int64(len(bodyBytes))
+				}
 
 				backendStart := time.Now()
 				serveReverseProxy(providerProxy.Proxy, recorder, attemptReq)

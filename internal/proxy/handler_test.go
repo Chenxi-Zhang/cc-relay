@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1864,4 +1867,79 @@ func TestHandlerGetOrCreateProxyLiveKeysFuncUsedOverStaticMap(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotSame(t, pp1, pp2)
 	assert.Equal(t, "live-key-v2", pp2.APIKey)
+}
+
+// TestRetryBodyPreservation verifies that the retry mechanism preserves the
+// request body across retry attempts. Without body buffering, ReverseProxy
+// consumes the body on the first attempt and retries send an empty body (422).
+func TestRetryBodyPreservation(t *testing.T) {
+	t.Parallel()
+
+	requestBody := `{"model":"claude-3-opus-20240229","messages":[{"role":"user","content":"hello"}],"max_tokens":100}`
+
+	var mu sync.Mutex
+	var bodies []string
+	callCount := 0
+
+	// Backend returns 429 on first call, 200 on second
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("backend failed to read body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		mu.Lock()
+		bodies = append(bodies, string(body))
+		callCount++
+		count := callCount
+		mu.Unlock()
+
+		if count == 1 {
+			// First call: return 429 to trigger retry
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"rate limit"}}`))
+			return
+		}
+
+		// Second call: success
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message","role":"assistant","content":[]}`))
+	}))
+	t.Cleanup(backend.Close)
+
+	provider := proxy.NewTestProvider(backend.URL)
+
+	// Create handler with retry enabled
+	handler, err := proxy.NewHandler(&proxy.HandlerOptions{
+		Provider:       provider,
+		APIKey:         testKey,
+		RoutingConfig:  &config.RoutingConfig{Retry: config.RetryConfig{Enabled: true, SameKeyRetries: 1}},
+		DebugOptions:   proxy.TestDebugOptions(),
+		ProviderInfos:  nil,
+		ProviderRouter: nil,
+		ProviderPools:  nil,
+	})
+	require.NoError(t, err)
+
+	// Non-streaming request (no "stream":true)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/v1/messages", strings.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", testKey)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// Should succeed after retry
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	// Verify both calls received the full body
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 2, "expected 2 backend calls (initial + retry)")
+	assert.Equal(t, requestBody, bodies[0], "first call should have full body")
+	assert.Equal(t, requestBody, bodies[1], "retry call should have full body (not empty)")
 }
