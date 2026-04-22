@@ -230,6 +230,37 @@ func (k *KeyMetadata) MarkHealthy() {
 	k.LastError = nil
 }
 
+// KeyStatusSnapshot is a thread-safe snapshot of a key's runtime state.
+type KeyStatusSnapshot struct {
+	ID            string
+	Available     bool
+	Healthy       bool
+	CooldownUntil time.Time
+	RPMRemaining  int
+	RPMLimit      int
+	ITPMRemaining int
+	ITPMLimit     int
+	OTPMLimit     int
+}
+
+// Snapshot returns a thread-safe copy of the key's current runtime state.
+func (k *KeyMetadata) Snapshot() KeyStatusSnapshot {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	return KeyStatusSnapshot{
+		ID:            k.ID,
+		Available:     k.Healthy && time.Now().After(k.CooldownUntil),
+		Healthy:       k.Healthy,
+		CooldownUntil: k.CooldownUntil,
+		RPMRemaining:  k.RPMRemaining,
+		RPMLimit:      k.RPMLimit,
+		ITPMRemaining: k.ITPMRemaining,
+		ITPMLimit:     k.ITPMLimit,
+		OTPMLimit:     k.OTPMLimit,
+	}
+}
+
 // String returns a human-readable representation of the key metadata.
 func (k *KeyMetadata) String() string {
 	k.mu.RLock()

@@ -129,7 +129,11 @@ func SetupRoutesWithProviders(
 	mux.Handle("GET /v1/models", modelsHandler)
 
 	// Providers endpoint (no auth required for discovery)
-	providersHandler := NewProvidersHandler(modelsProviders)
+	var providerPools map[string]*keypool.KeyPool
+	if pool != nil {
+		providerPools = map[string]*keypool.KeyPool{provider.Name(): pool}
+	}
+	providersHandler := NewProvidersHandlerWithPools(modelsProviders, providerPools)
 	mux.Handle("GET /v1/providers", providersHandler)
 
 	// Health check endpoint (no auth required)
@@ -203,8 +207,14 @@ func SetupRoutesWithLiveKeyPools(opts *RoutesOptions) (http.Handler, error) {
 	mux.Handle("POST /v1/messages", messagesHandler)
 
 	providersGetter := liveProvidersGetter(opts)
+	poolsGetter := func() map[string]*keypool.KeyPool {
+		if opts.GetProviderPools != nil {
+			return opts.GetProviderPools()
+		}
+		return opts.ProviderPools
+	}
 	mux.Handle("GET /v1/models", NewModelsHandlerWithProviderFunc(providersGetter))
-	mux.Handle("GET /v1/providers", NewProvidersHandlerWithProviderFunc(providersGetter))
+	mux.Handle("GET /v1/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
 
 	registerHealthRoute(mux)
 

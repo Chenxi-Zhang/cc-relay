@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/omarluq/cc-relay/internal/keypool"
 	"github.com/omarluq/cc-relay/internal/providers"
 	"github.com/omarluq/cc-relay/internal/proxy"
 )
@@ -137,4 +139,205 @@ func TestProvidersHandlerNilProviders(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
 	assert.Equal(t, proxy.ListObject, response.Object)
 	assert.Empty(t, response.Data)
+}
+
+func TestProvidersHandlerWithPoolsShowsKeyStatus(t *testing.T) {
+	t.Parallel()
+
+	provider := providers.NewAnthropicProviderWithModels(
+		"anthropic-primary",
+		"https://api.anthropic.com",
+		[]string{"claude-sonnet-4-5-20250514"},
+	)
+
+	pool, err := keypool.NewKeyPool("anthropic-primary", keypool.PoolConfig{
+		Strategy: "least_loaded",
+		Keys: []keypool.KeyConfig{
+			{APIKey: "sk-test-key-1", RPMLimit: 50},
+			{APIKey: "sk-test-key-2", RPMLimit: 100},
+		},
+	})
+	require.NoError(t, err)
+
+	pools := map[string]*keypool.KeyPool{"anthropic-primary": pool}
+	handler := proxy.NewProvidersHandlerWithPools([]providers.Provider{provider}, pools)
+	rec := serveProviders(t, handler)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response proxy.ProvidersResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Data, 1)
+
+	p := response.Data[0]
+	assert.Equal(t, "anthropic-primary", p.Name)
+	assert.Equal(t, 2, p.KeysTotal)
+	assert.Equal(t, 2, p.KeysAvailable)
+	require.Len(t, p.Keys, 2)
+
+	for _, key := range p.Keys {
+		assert.True(t, key.Available)
+		assert.True(t, key.Healthy)
+		assert.Equal(t, 0, key.CooldownSeconds)
+		assert.Greater(t, key.RPMLimit, 0)
+	}
+}
+
+func TestProvidersHandlerKeyStatusReflectsUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	provider := providers.NewAnthropicProviderWithModels(
+		"anthropic-primary",
+		"https://api.anthropic.com",
+		[]string{"claude-sonnet-4-5-20250514"},
+	)
+
+	pool, err := keypool.NewKeyPool("anthropic-primary", keypool.PoolConfig{
+		Strategy: "least_loaded",
+		Keys: []keypool.KeyConfig{
+			{APIKey: "sk-healthy-key", RPMLimit: 50},
+			{APIKey: "sk-unhealthy-key", RPMLimit: 50},
+		},
+	})
+	require.NoError(t, err)
+
+	// Mark one key as unhealthy
+	poolKeys := pool.Keys()
+	require.Len(t, poolKeys, 2)
+	poolKeys[1].MarkUnhealthy(assert.AnError)
+
+	pools := map[string]*keypool.KeyPool{"anthropic-primary": pool}
+	handler := proxy.NewProvidersHandlerWithPools([]providers.Provider{provider}, pools)
+	rec := serveProviders(t, handler)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response proxy.ProvidersResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Data, 1)
+
+	p := response.Data[0]
+	assert.Equal(t, 2, p.KeysTotal)
+	assert.Equal(t, 1, p.KeysAvailable)
+
+	var healthyFound, unhealthyFound bool
+	for _, key := range p.Keys {
+		if key.Healthy {
+			healthyFound = true
+			assert.True(t, key.Available)
+		} else {
+			unhealthyFound = true
+			assert.False(t, key.Available)
+		}
+	}
+	assert.True(t, healthyFound, "expected at least one healthy key")
+	assert.True(t, unhealthyFound, "expected at least one unhealthy key")
+}
+
+func TestProvidersHandlerKeyStatusReflectsCooldown(t *testing.T) {
+	t.Parallel()
+
+	provider := providers.NewAnthropicProviderWithModels(
+		"anthropic-primary",
+		"https://api.anthropic.com",
+		[]string{"claude-sonnet-4-5-20250514"},
+	)
+
+	pool, err := keypool.NewKeyPool("anthropic-primary", keypool.PoolConfig{
+		Strategy: "least_loaded",
+		Keys: []keypool.KeyConfig{
+			{APIKey: "sk-available-key", RPMLimit: 50},
+			{APIKey: "sk-cooldown-key", RPMLimit: 50},
+		},
+	})
+	require.NoError(t, err)
+
+	// Put one key in cooldown for 30 seconds
+	poolKeys := pool.Keys()
+	require.Len(t, poolKeys, 2)
+	poolKeys[1].SetCooldown(time.Now().Add(30 * time.Second))
+
+	pools := map[string]*keypool.KeyPool{"anthropic-primary": pool}
+	handler := proxy.NewProvidersHandlerWithPools([]providers.Provider{provider}, pools)
+	rec := serveProviders(t, handler)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response proxy.ProvidersResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Data, 1)
+
+	p := response.Data[0]
+	assert.Equal(t, 2, p.KeysTotal)
+	assert.Equal(t, 1, p.KeysAvailable)
+
+	for _, key := range p.Keys {
+		if !key.Available {
+			assert.True(t, key.Healthy, "cooled-down key should still be healthy")
+			assert.Greater(t, key.CooldownSeconds, 0, "cooldown key should have remaining seconds")
+		}
+	}
+}
+
+func TestProvidersHandlerWithProviderFuncAndPools(t *testing.T) {
+	t.Parallel()
+
+	provider := providers.NewAnthropicProviderWithModels(
+		"anthropic-primary",
+		"https://api.anthropic.com",
+		[]string{"claude-sonnet-4-5-20250514"},
+	)
+
+	pool, err := keypool.NewKeyPool("anthropic-primary", keypool.PoolConfig{
+		Strategy: "round_robin",
+		Keys:     []keypool.KeyConfig{{APIKey: "sk-live-key", RPMLimit: 50}},
+	})
+	require.NoError(t, err)
+
+	providersGetter := func() []providers.Provider {
+		return []providers.Provider{provider}
+	}
+	poolsGetter := func() map[string]*keypool.KeyPool {
+		return map[string]*keypool.KeyPool{"anthropic-primary": pool}
+	}
+
+	handler := proxy.NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter)
+	rec := serveProviders(t, handler)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response proxy.ProvidersResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Data, 1)
+
+	p := response.Data[0]
+	assert.Equal(t, 1, p.KeysTotal)
+	assert.Equal(t, 1, p.KeysAvailable)
+	require.Len(t, p.Keys, 1)
+	assert.True(t, p.Keys[0].Available)
+}
+
+func TestProvidersHandlerNoPoolOmitsKeys(t *testing.T) {
+	t.Parallel()
+
+	provider := providers.NewAnthropicProviderWithModels(
+		"anthropic-primary",
+		"https://api.anthropic.com",
+		[]string{"claude-sonnet-4-5-20250514"},
+	)
+
+	// No pool provided — backward compatible path
+	handler := proxy.NewProvidersHandler([]providers.Provider{provider})
+	rec := serveProviders(t, handler)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response proxy.ProvidersResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Data, 1)
+
+	p := response.Data[0]
+	assert.Equal(t, 0, p.KeysTotal)
+	assert.Equal(t, 0, p.KeysAvailable)
+	assert.Empty(t, p.Keys)
 }
