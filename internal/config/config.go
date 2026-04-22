@@ -309,6 +309,7 @@ type ProviderConfig struct {
 	Models             []string          `yaml:"models" toml:"models"`
 	Pooling            PoolingConfig     `yaml:"pooling" toml:"pooling"`
 	Enabled            bool              `yaml:"enabled" toml:"enabled"`
+	AuthMethod         string            `yaml:"auth_method" toml:"auth_method"` // "x-api-key" (default) or "bearer"
 }
 
 // PoolingConfig defines key pool behavior for a provider.

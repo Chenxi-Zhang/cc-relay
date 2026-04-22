@@ -20,10 +20,11 @@ const (
 	ProviderTypeBedrock   = "bedrock"
 	ProviderTypeVertex    = "vertex"
 	ProviderTypeAzure     = "azure"
+	ProviderTypeGeneric   = "generic"
 )
 
 // supportedProviderTypes is the list of supported provider types for error messages.
-const supportedProviderTypes = "anthropic, zai, minimax, ollama, bedrock, vertex, azure"
+const supportedProviderTypes = "anthropic, zai, minimax, ollama, bedrock, vertex, azure, generic"
 
 // createCloudProvider creates a cloud provider (bedrock, vertex, azure) with validation.
 func createCloudProvider(ctx context.Context, providerConfig *config.ProviderConfig) (providers.Provider, error) {
@@ -81,6 +82,11 @@ func createProvider(ctx context.Context, providerConfig *config.ProviderConfig) 
 	case ProviderTypeOllama:
 		return providers.NewOllamaProviderWithMapping(
 			providerConfig.Name, providerConfig.BaseURL, providerConfig.Models, providerConfig.ModelMapping,
+		), nil
+	case ProviderTypeGeneric:
+		return providers.NewGenericProviderWithMapping(
+			providerConfig.Name, providerConfig.BaseURL, providerConfig.Models, providerConfig.ModelMapping,
+			providerConfig.AuthMethod,
 		), nil
 	case ProviderTypeBedrock, ProviderTypeVertex, ProviderTypeAzure:
 		return createCloudProvider(ctx, providerConfig)
