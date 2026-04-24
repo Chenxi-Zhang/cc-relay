@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"bytes"
+	"io"
 	"net/http"
+
+	"github.com/tidwall/gjson"
 )
 
 // peekWriter wraps an http.ResponseWriter and buffers 429 responses for retry.
@@ -114,4 +117,44 @@ func (pw *peekWriter) commit() {
 	}
 
 	pw.committed = true
+}
+
+// maxPeekBytes is the upper limit for how many bytes peekModelFromSSE will read
+// before giving up on finding a model field.
+const maxPeekBytes = 4096
+
+// peekModelFromSSE reads from r incrementally, looking for the "model" field
+// inside an SSE "message_start" data payload. It returns the model name and all
+// bytes read (which must be replayed into the response body). If the model is
+// not found within maxPeekBytes, it returns ("", peeked).
+func peekModelFromSSE(r io.Reader) (model string, peeked []byte) {
+	buf := make([]byte, 0, 1024)
+	tmp := make([]byte, 512)
+	for len(buf) < maxPeekBytes {
+		n, err := r.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		if n > 0 {
+			// Look for "data:" lines containing "message_start"
+			for _, line := range bytes.Split(buf, []byte("\n")) {
+				line = bytes.TrimSpace(line)
+				after, ok := bytes.CutPrefix(line, []byte("data:"))
+				if !ok {
+					continue
+				}
+				after = bytes.TrimSpace(after)
+				if !bytes.Contains(after, []byte("message_start")) {
+					continue
+				}
+				// Extract model from JSON: message.model
+				m := gjson.GetBytes(after, "message.model")
+				if m.Exists() {
+					return m.String(), buf
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return "", buf
 }

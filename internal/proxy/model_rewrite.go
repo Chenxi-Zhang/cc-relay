@@ -75,7 +75,7 @@ func (r *ModelRewriter) RewriteRequest(req *http.Request, logger *zerolog.Logger
 	})
 
 	// Log successful rewrite
-	if res.wasRewritten && logger != nil {
+	if logger != nil {
 		logger.Debug().
 			Str("original_model", res.originalModel).
 			Str("mapped_model", res.mappedModel).
@@ -114,8 +114,8 @@ func (r *ModelRewriter) tryRewrite(bodyBytes []byte) mo.Result[rewriteResult] {
 	if !found {
 		// No mapping - return original body unchanged (not an error, just no rewrite)
 		return mo.Ok(rewriteResult{
-			originalModel: "",
-			mappedModel:   "",
+			originalModel: originalModel,
+			mappedModel:   originalModel,
 			bodyBytes:     bodyBytes,
 			wasRewritten:  false,
 		})

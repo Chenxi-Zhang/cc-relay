@@ -298,6 +298,21 @@ func (h *Handler) updateKeyPoolFromResponse(
 
 	logger := zerolog.Ctx(resp.Request.Context())
 
+	// Peek response body until we extract the model name from the SSE stream,
+	// then log just the model instead of raw bytes.
+	if resp.Body != nil && logger.GetLevel() <= zerolog.DebugLevel {
+		model, peeked := peekModelFromSSE(resp.Body)
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(peeked), resp.Body), resp.Body}
+		if model != "" {
+			logger.Debug().Str("backend_model", model).Int("bytes_read", len(peeked)).Msg("response model peek")
+		} else {
+			logger.Debug().Int("bytes_read", len(peeked)).Msg("response model peek: model not found")
+		}
+	}
+
 	// Update key state from response headers
 	if err := pool.UpdateKeyFromHeaders(keyID, resp.Header); err != nil {
 		logger.Debug().Err(err).Msg("failed to update key from headers")
@@ -811,7 +826,7 @@ func (h *Handler) serveWithRetry(
 		if err != nil {
 			if lastRecorder != nil {
 				overrideRetryAfter(lastRecorder.Header())
-		flushRecorder(lastRecorder, writer)
+				flushRecorder(lastRecorder, writer)
 				return
 			}
 			WriteError(writer, http.StatusServiceUnavailable, "api_error",
@@ -829,7 +844,7 @@ func (h *Handler) serveWithRetry(
 		if proxyErr != nil {
 			if lastRecorder != nil {
 				overrideRetryAfter(lastRecorder.Header())
-		flushRecorder(lastRecorder, writer)
+				flushRecorder(lastRecorder, writer)
 				return
 			}
 			WriteError(writer, http.StatusInternalServerError, "internal_error",
