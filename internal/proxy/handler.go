@@ -913,8 +913,12 @@ func (h *Handler) serveWithRetry(
 				// Must happen BEFORE rewriteModelIfNeeded so the rewrite
 				// operates on the original body and its changes are preserved.
 				if bodyBytes != nil {
-					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-					attemptReq.ContentLength = int64(len(bodyBytes))
+					bodyToUse := bodyBytes
+					if providerAttempt > 0 && prep.hasThinking && prep.originalBodyBytes != nil {
+						bodyToUse = StripThinkingForProviderSwitch(prep.originalBodyBytes)
+					}
+					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyToUse))
+					attemptReq.ContentLength = int64(len(bodyToUse))
 				}
 
 				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
@@ -1100,8 +1104,12 @@ func (h *Handler) serveStreamingWithRetry(
 				// Must happen BEFORE rewriteModelIfNeeded so the rewrite
 				// operates on the original body and its changes are preserved.
 				if bodyBytes != nil {
-					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-					attemptReq.ContentLength = int64(len(bodyBytes))
+					bodyToUse := bodyBytes
+					if providerAttempt > 0 && prep.hasThinking && prep.originalBodyBytes != nil {
+						bodyToUse = StripThinkingForProviderSwitch(prep.originalBodyBytes)
+					}
+					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyToUse))
+					attemptReq.ContentLength = int64(len(bodyToUse))
 				}
 
 				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
@@ -1206,9 +1214,10 @@ func peekRequestBody(body io.ReadCloser, logger *zerolog.Logger) io.ReadCloser {
 }
 
 type requestPrep struct {
-	request     *http.Request
-	model       string
-	hasThinking bool
+	request           *http.Request
+	model             string
+	hasThinking       bool
+	originalBodyBytes []byte // raw body before thinking signature processing
 }
 
 func (h *Handler) prepareRequest(writer http.ResponseWriter, request *http.Request) (requestPrep, bool) {
@@ -1226,10 +1235,23 @@ func (h *Handler) prepareRequest(writer http.ResponseWriter, request *http.Reque
 		request = request.WithContext(context.WithValue(request.Context(), modelNameContextKey, model))
 	}
 
+	// Capture raw body before thinking signature processing for retry fallback.
+	var originalBody []byte
+	if request.Body != nil {
+		originalBody, _ = io.ReadAll(request.Body)
+		request.Body = io.NopCloser(bytes.NewReader(originalBody))
+		request.ContentLength = int64(len(originalBody))
+	}
+
 	request = h.processThinkingSignatures(request, model)
 
 	hasThinking := h.detectThinkingAffinity(&request)
-	return requestPrep{request: request, model: model, hasThinking: hasThinking}, true
+	return requestPrep{
+		request:           request,
+		model:             model,
+		hasThinking:       hasThinking,
+		originalBodyBytes: originalBody,
+	}, true
 }
 
 func (h *Handler) detectThinkingAffinity(request **http.Request) bool {

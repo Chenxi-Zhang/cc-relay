@@ -18,6 +18,9 @@ const (
 	blockTypeToolUse  = "tool_use"
 )
 
+// Fields to check for fast-path detection of reasoning content.
+var reasoningContentMarker = []byte(`"reasoning_content"`)
+
 // Detection markers for thinking blocks (used for fast path detection).
 // We check for both compact and spaced JSON formats.
 var (
@@ -694,4 +697,130 @@ func ProcessNonStreamingResponse(
 	})
 
 	return modifiedBody
+}
+
+// StripThinkingForProviderSwitch removes all thinking-related content from the
+// request body to prepare it for a different provider. When retrying with a
+// different provider, thinking block signatures from the original provider are
+// invalid and the new provider may reject the request.
+//
+// Strips:
+//   - The top-level "thinking" configuration field
+//   - Thinking blocks from assistant message content
+//   - The "reasoning_content" field from assistant messages
+//
+// Uses WouldOrphanToolResults/ReplaceContentWithPlaceholder to avoid leaving
+// orphaned tool_result blocks when dropping assistant messages.
+func StripThinkingForProviderSwitch(body []byte) []byte {
+	// Fast path: skip if no thinking blocks or reasoning_content detected
+	if !HasThinkingBlocks(body) && !bytes.Contains(body, reasoningContentMarker) {
+		return body
+	}
+
+	modifiedBody := body
+
+	// 1. Remove top-level "thinking" config field
+	if gjson.GetBytes(body, "thinking").Exists() {
+		var err error
+		modifiedBody, err = sjson.DeleteBytes(modifiedBody, "thinking")
+		if err != nil {
+			return body
+		}
+	}
+
+	// 2. Process assistant messages
+	messages := gjson.GetBytes(modifiedBody, "messages")
+	if !messages.Exists() || !messages.IsArray() {
+		return modifiedBody
+	}
+
+	var dropIndexes []int
+	modifiedBody, dropIndexes = stripThinkingFromMessages(modifiedBody, messages)
+
+	// Drop empty assistant messages (reverse order to preserve indices)
+	if len(dropIndexes) > 0 {
+		var err error
+		modifiedBody, err = dropMessagesByIndex(modifiedBody, dropIndexes)
+		if err != nil {
+			return body
+		}
+	}
+
+	return modifiedBody
+}
+
+// stripThinkingFromMessages removes thinking blocks and reasoning_content from
+// assistant messages. Returns the modified body and indexes of messages to drop.
+func stripThinkingFromMessages(body []byte, messages gjson.Result) ([]byte, []int) {
+	var dropIndexes []int
+	modifiedBody := body
+
+	messages.ForEach(func(key, msg gjson.Result) bool {
+		if msg.Get("role").String() != roleAssistant {
+			return true
+		}
+
+		// Remove reasoning_content field from this message
+		rcPath := fmt.Sprintf("messages.%d.reasoning_content", key.Int())
+		if gjson.GetBytes(modifiedBody, rcPath).Exists() {
+			var err error
+			modifiedBody, err = sjson.DeleteBytes(modifiedBody, rcPath)
+			if err != nil {
+				return true
+			}
+		}
+
+		// Check content for thinking blocks
+		content := msg.Get("content")
+		if !content.Exists() || !content.IsArray() {
+			return true
+		}
+
+		hasThinking := false
+		hasOther := false
+		content.ForEach(func(_, block gjson.Result) bool {
+			if block.Get("type").String() == blockTypeThinking {
+				hasThinking = true
+			} else {
+				hasOther = true
+			}
+			return true
+		})
+
+		if !hasThinking {
+			return true
+		}
+
+		if !hasOther {
+			// All blocks are thinking - drop message or use placeholder
+			if WouldOrphanToolResults(modifiedBody, key.Int()) {
+				modifiedBody = ReplaceContentWithPlaceholder(modifiedBody, key.Int())
+			} else {
+				dropIndexes = append(dropIndexes, int(key.Int()))
+			}
+			return true
+		}
+
+		// Has thinking AND other blocks - remove only thinking blocks
+		var keptBlocks []any
+		content.ForEach(func(_, block gjson.Result) bool {
+			if block.Get("type").String() != blockTypeThinking {
+				keptBlocks = append(keptBlocks, block.Value())
+			}
+			return true
+		})
+		var err error
+		modifiedBody, err = sjson.SetBytes(
+			modifiedBody,
+			messageContentPath(key.Int()),
+			keptBlocks,
+		)
+		if err != nil {
+			return true
+		}
+
+		return true
+	})
+
+	return modifiedBody, dropIndexes
 }
