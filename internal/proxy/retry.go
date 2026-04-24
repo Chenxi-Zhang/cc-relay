@@ -185,6 +185,16 @@ func (h *Handler) selectProviderExcluding(
 		candidates = filtered
 	}
 
+	// Filter out providers whose keypool has no available keys.
+	// Prevents the router from selecting a provider that cannot serve.
+	filtered := make([]router.ProviderInfo, 0, len(candidates))
+	for _, c := range candidates {
+		if h.hasAvailableKeys(c.Provider.Name()) {
+			filtered = append(filtered, c)
+		}
+	}
+	candidates = filtered
+
 	if len(candidates) == 0 {
 		return router.ProviderInfo{}, nil, fmt.Errorf("all providers excluded after retry")
 	}

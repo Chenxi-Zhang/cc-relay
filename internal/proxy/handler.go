@@ -548,6 +548,17 @@ func (h *Handler) currentKeyPool(
 	return key, pool, keys, pools
 }
 
+// hasAvailableKeys returns true if the provider has no keypool (single-key mode)
+// or if its keypool has at least one available key. Returns false when the pool
+// exists but all keys are exhausted, on cooldown, or unhealthy.
+func (h *Handler) hasAvailableKeys(provName string) bool {
+	_, pool, _, _ := h.currentKeyPool(provName)
+	if pool == nil {
+		return true
+	}
+	return pool.GetStats().AvailableKeys > 0
+}
+
 func (h *Handler) preserveProxyAuthInputs(
 	providerProxy *ProviderProxy,
 	key string,
