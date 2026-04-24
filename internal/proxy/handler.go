@@ -897,6 +897,15 @@ func (h *Handler) serveWithRetry(
 				logger := h.createProviderLoggerWithProvider(attemptReq, selected.Provider)
 				attemptReq = attemptReq.WithContext(logger.WithContext(attemptReq.Context()))
 				h.logAndSetDebugHeaders(writer, attemptReq, &logger, selected.Provider)
+
+				// Reset body for this attempt (ReverseProxy consumes Body).
+				// Must happen BEFORE rewriteModelIfNeeded so the rewrite
+				// operates on the original body and its changes are preserved.
+				if bodyBytes != nil {
+					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					attemptReq.ContentLength = int64(len(bodyBytes))
+				}
+
 				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
 				attemptReq, getTLSMetrics := h.attachTLSTraceIfEnabled(attemptReq)
 
@@ -904,12 +913,6 @@ func (h *Handler) serveWithRetry(
 				recorder := httptest.NewRecorder()
 				SetProviderNameOnWriter(recorder, providerName)
 				rc.recordAttempt(providerName, keyID)
-
-				// Reset body for this attempt (ReverseProxy consumes Body)
-				if bodyBytes != nil {
-					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-					attemptReq.ContentLength = int64(len(bodyBytes))
-				}
 
 				backendStart := time.Now()
 				serveReverseProxy(providerProxy.Proxy, recorder, attemptReq)
@@ -1081,14 +1084,17 @@ func (h *Handler) serveStreamingWithRetry(
 				logger := h.createProviderLoggerWithProvider(attemptReq, selected.Provider)
 				attemptReq = attemptReq.WithContext(logger.WithContext(attemptReq.Context()))
 				h.logAndSetDebugHeaders(writer, attemptReq, &logger, selected.Provider)
-				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
-				attemptReq, getTLSMetrics := h.attachTLSTraceIfEnabled(attemptReq)
 
-				// Reset body for this attempt (ReverseProxy consumes Body)
+				// Reset body for this attempt (ReverseProxy consumes Body).
+				// Must happen BEFORE rewriteModelIfNeeded so the rewrite
+				// operates on the original body and its changes are preserved.
 				if bodyBytes != nil {
 					attemptReq.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 					attemptReq.ContentLength = int64(len(bodyBytes))
 				}
+
+				h.rewriteModelIfNeeded(attemptReq, &logger, selected.Provider)
+				attemptReq, getTLSMetrics := h.attachTLSTraceIfEnabled(attemptReq)
 
 				pw := newPeekWriter(writer)
 				rc.recordAttempt(providerName, keyID)
@@ -1158,10 +1164,34 @@ func (h *Handler) serveStreamingWithRetry(
 // serveReverseProxy forwards the request via the pre-configured reverse proxy.
 // The proxy target URL was validated at construction time in NewProviderProxy.
 func serveReverseProxy(proxy *httputil.ReverseProxy, w http.ResponseWriter, r *http.Request) {
+	// Peek request body for debugging before forwarding to backend.
+	if r.Body != nil {
+		if logger := zerolog.Ctx(r.Context()); logger.GetLevel() <= zerolog.DebugLevel {
+			// r.Body = peekRequestBody(r.Body, logger)
+		}
+	}
 	type httpHandler interface {
 		ServeHTTP(http.ResponseWriter, *http.Request)
 	}
 	httpHandler(proxy).ServeHTTP(w, r)
+}
+
+// peekRequestBody reads and logs the first 300 bytes of the request body,
+// then wraps the body so the peeked bytes are replayed on subsequent reads.
+func peekRequestBody(body io.ReadCloser, logger *zerolog.Logger) io.ReadCloser {
+	const peekSize = 4096
+	buf := make([]byte, peekSize)
+	n, _ := io.ReadFull(body, buf)
+	if n > 0 {
+		logger.Debug().
+			Str("body_peek", string(buf[:n])).
+			Int("bytes_peeked", n).
+			Msg("request body peek before send")
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(buf[:n]), body), body}
 }
 
 type requestPrep struct {
