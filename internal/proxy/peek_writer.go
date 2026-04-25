@@ -46,7 +46,7 @@ func (pw *peekWriter) WriteHeader(code int) {
 	}
 	pw.wroteHeader = true
 	pw.statusCode = code
-	if code == http.StatusTooManyRequests {
+	if isRetryableStatusCode(code) {
 		pw.is429 = true
 		return
 	}

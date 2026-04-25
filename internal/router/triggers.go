@@ -106,7 +106,7 @@ func (t *ConnectionTrigger) Name() string {
 // This provides sensible defaults for most use cases.
 func DefaultTriggers() []FailoverTrigger {
 	return []FailoverTrigger{
-		NewStatusCodeTrigger(429, 500, 502, 503, 504),
+		NewStatusCodeTrigger(403, 429, 500, 502, 503, 504),
 		NewTimeoutTrigger(),
 		NewConnectionTrigger(),
 	}

@@ -100,6 +100,12 @@ func (rc *retryContext) sameKeyBackoff(cfg config.RetryConfig) time.Duration {
 	return backoff
 }
 
+// isRetryableStatusCode returns true for HTTP status codes that should trigger
+// a retry with a different key or provider.
+func isRetryableStatusCode(code int) bool {
+	return code == http.StatusTooManyRequests || code == http.StatusForbidden
+}
+
 // isTransient429 checks whether the most recent 429 was a transient error
 // eligible for same-key retry. For ZAI providers only Transient category
 // (1302/1303/1305/1312) qualifies. For non-ZAI providers all 429s are
@@ -173,7 +179,16 @@ func (h *Handler) selectProviderExcluding(
 		return h.defaultProviderInfo(), nil, nil
 	}
 
-	candidates = h.applyThinkingAffinity(candidates, hasThinking)
+	// Filter out providers whose keypool has no available keys.
+	// Must run before applyThinkingAffinity so that affinity selection
+	// only considers providers that can actually serve requests.
+	filtered := make([]router.ProviderInfo, 0, len(candidates))
+	for _, c := range candidates {
+		if h.hasAvailableKeys(c.Provider.Name()) {
+			filtered = append(filtered, c)
+		}
+	}
+	candidates = filtered
 
 	if len(rc.excludedProviders) > 0 {
 		filtered := make([]router.ProviderInfo, 0, len(candidates))
@@ -185,15 +200,7 @@ func (h *Handler) selectProviderExcluding(
 		candidates = filtered
 	}
 
-	// Filter out providers whose keypool has no available keys.
-	// Prevents the router from selecting a provider that cannot serve.
-	filtered := make([]router.ProviderInfo, 0, len(candidates))
-	for _, c := range candidates {
-		if h.hasAvailableKeys(c.Provider.Name()) {
-			filtered = append(filtered, c)
-		}
-	}
-	candidates = filtered
+	candidates = h.applyThinkingAffinity(candidates, hasThinking)
 
 	if len(candidates) == 0 {
 		return router.ProviderInfo{}, nil, fmt.Errorf("all providers excluded after retry")

@@ -26,7 +26,7 @@ var _ net.Error = &mockNetError{timeout: false, temporary: false}
 func TestStatusCodeTriggerShouldFailover(t *testing.T) {
 	t.Parallel()
 
-	trigger := router.NewStatusCodeTrigger(429, 500, 502, 503, 504)
+	trigger := router.NewStatusCodeTrigger(403, 429, 500, 502, 503, 504)
 
 	tests := []struct {
 		name       string
@@ -44,7 +44,7 @@ func TestStatusCodeTriggerShouldFailover(t *testing.T) {
 		{name: "201 Created", statusCode: 201, want: false},
 		{name: "400 Bad Request", statusCode: 400, want: false},
 		{name: "401 Unauthorized", statusCode: 401, want: false},
-		{name: "403 Forbidden", statusCode: 403, want: false},
+		{name: "403 Forbidden", statusCode: 403, want: true},
 		{name: "404 Not Found", statusCode: 404, want: false},
 		{name: "501 Not Implemented", statusCode: 501, want: false},
 		{name: "0 no status", statusCode: 0, want: false},

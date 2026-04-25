@@ -334,6 +334,17 @@ func (h *Handler) updateKeyPoolFromResponse(
 			Msg("key hit rate limit, marking cooldown")
 	}
 
+	// Handle 403 from backend — quota exhausted or auth failure
+	if resp.StatusCode == http.StatusForbidden {
+		cooldown := 5 * time.Hour
+		pool.MarkKeyExhausted(keyID, cooldown)
+		logger.Warn().
+			Str("key_id", keyID).
+			Dur("cooldown", cooldown).
+			Msg("key returned 403 Forbidden (quota exhausted), marking cooldown")
+		return true // skip circuit breaker — key issue, not provider issue
+	}
+
 	// Handle 400 from backend for ZAI provider
 	if resp.StatusCode == http.StatusBadRequest && providers.IsZAIProvider(prov.Owner()) {
 		return h.handleZAI400(resp, pool, keyID, logger)
@@ -936,19 +947,26 @@ func (h *Handler) serveWithRetry(
 
 				h.logMetricsIfEnabled(attemptReq, &logger, start, backendTime, getTLSMetrics)
 
-				// Non-429 → success or non-retryable error, flush immediately
-				if recorder.Code != http.StatusTooManyRequests {
+				// Non-retryable status → success or non-retryable error, flush immediately
+				if !isRetryableStatusCode(recorder.Code) {
 					flushRecorder(recorder, writer)
 					return
 				}
 
-				// --- 429 received ---
+				// --- Retryable status received (429/403) ---
 				// modifyResponse already ran during serveReverseProxy, which
 				// called updateKeyPoolFromResponse → MarkKeyExhausted / MarkKeyUnhealthy.
 				// Now decide whether to retry at Level 1 (same key) or escalate.
 
 				// Parse Retry-After from the buffered response for backoff calculation
 				rc.lastRetryAfter = parseRetryAfter(recorder.Header())
+
+				// 403 never benefits from same-key retry — quota is exhausted
+				if recorder.Code == http.StatusForbidden {
+					logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+						recorder.Code, "L1_skip", "403 Forbidden, escalating to next key")
+					break
+				}
 
 				// Check if 429 is transient → eligible for same-key retry
 				if !rc.isTransient429(selected.Provider) {
@@ -983,7 +1001,7 @@ func (h *Handler) serveWithRetry(
 		}
 	}
 
-	// All retry levels exhausted — return last 429 to client
+	// All retry levels exhausted — return last error to client
 	if lastRecorder != nil {
 		logger := zerolog.Ctx(request.Context())
 		logRetryExhausted(logger, rc.attemptCount, rc.triedProviders, rc.triedKeys)
@@ -996,7 +1014,7 @@ func (h *Handler) serveWithRetry(
 	WriteError(writer, http.StatusServiceUnavailable, "api_error", "no providers available for retry")
 }
 
-// serveStreamingWithRetry implements three-level 429 retry for streaming requests.
+// serveStreamingWithRetry implements three-level retry for streaming requests.
 //
 // Uses peekWriter instead of httptest.ResponseRecorder: 429 responses are buffered
 // (small JSON errors), while 200 streaming responses are committed immediately to the
@@ -1129,16 +1147,23 @@ func (h *Handler) serveStreamingWithRetry(
 					return
 				}
 
-				// Non-429, non-streaming (e.g., 400, 500) — commit buffered response.
+				// Non-retryable, non-streaming (e.g., 400, 500) — commit buffered response.
 				if !pw.Is429() {
 					pw.FlushBuffered429()
 					return
 				}
 
-				// --- 429 received (still buffered) ---
+				// --- Retryable status received (429/403, still buffered) ---
 				lastPeek = pw
 
 				rc.lastRetryAfter = parseRetryAfter(pw.Header())
+
+				// 403 never benefits from same-key retry — quota is exhausted
+				if pw.Status() == http.StatusForbidden {
+					logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
+						pw.Status(), "L1_skip", "403 Forbidden, escalating to next key")
+					break
+				}
 
 				if !rc.isTransient429(selected.Provider) {
 					logRetryAttempt(&logger, rc.attemptCount, providerName, keyID,
@@ -1168,7 +1193,7 @@ func (h *Handler) serveStreamingWithRetry(
 		}
 	}
 
-	// All retries exhausted — return last 429 to client
+	// All retries exhausted — return last error to client
 	if lastPeek != nil {
 		logger := zerolog.Ctx(request.Context())
 		logRetryExhausted(logger, rc.attemptCount, rc.triedProviders, rc.triedKeys)

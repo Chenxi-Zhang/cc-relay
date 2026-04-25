@@ -120,5 +120,5 @@ func ShouldCountAsFailure(statusCode int, err error) bool {
 	if err != nil {
 		return !errors.Is(err, context.Canceled)
 	}
-	return statusCode >= 500 || statusCode == 429
+	return statusCode >= 500 || statusCode == 429 || statusCode == 403
 }

@@ -331,7 +331,7 @@ func TestShouldCountAsFailure(t *testing.T) {
 		{name: "201 Created", statusCode: 201, err: nil, want: false},
 		{name: "400 Bad Request", statusCode: 400, err: nil, want: false},
 		{name: "401 Unauthorized", statusCode: 401, err: nil, want: false},
-		{name: "403 Forbidden", statusCode: 403, err: nil, want: false},
+		{name: "403 Forbidden", statusCode: 403, err: nil, want: true},
 		{name: "404 Not Found", statusCode: 404, err: nil, want: false},
 		{name: "422 Unprocessable", statusCode: 422, err: nil, want: false},
 		{name: "context canceled", statusCode: 0, err: context.Canceled, want: false},
