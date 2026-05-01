@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
 )
 
@@ -157,4 +158,63 @@ func peekModelFromSSE(r io.Reader) (model string, peeked []byte) {
 		}
 	}
 	return "", buf
+}
+
+// peekModelFromOpenAISSE reads from r incrementally, looking for the "model" field
+// in the first SSE data line of an OpenAI Chat Completions streaming response.
+// OpenAI format: data: {"id":"...","model":"gpt-4o","choices":[...]}
+// The model is at the top level of the JSON, unlike Anthropic's message_start.message.model.
+// Returns the model name and all bytes read (which must be replayed into the response body).
+// If the model is not found within maxPeekBytes, it returns ("", peeked).
+func peekModelFromOpenAISSE(r io.Reader) (model string, peeked []byte) {
+	buf := make([]byte, 0, 1024)
+	tmp := make([]byte, 512)
+	for len(buf) < maxPeekBytes {
+		n, err := r.Read(tmp)
+		buf = append(buf, tmp[:n]...)
+		if n > 0 {
+			for _, line := range bytes.Split(buf, []byte("\n")) {
+				line = bytes.TrimSpace(line)
+				after, ok := bytes.CutPrefix(line, []byte("data:"))
+				if !ok {
+					continue
+				}
+				after = bytes.TrimSpace(after)
+				// Skip [DONE] sentinel
+				if bytes.Equal(after, []byte("[DONE]")) {
+					continue
+				}
+				// OpenAI puts model at top level: {"model":"..."}
+				m := gjson.GetBytes(after, "model")
+				if m.Exists() {
+					return m.String(), buf
+				}
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return "", buf
+}
+
+// peekAndLogOpenAIModel peeks into an OpenAI response body to extract and log
+// the actual backend model name. The response body is restored after peeking.
+// This is the OpenAI equivalent of the model peeking done in handler.go for
+// Anthropic responses.
+func peekAndLogOpenAIModel(resp *http.Response, logger *zerolog.Logger) {
+	if resp.Body == nil || logger.GetLevel() > zerolog.DebugLevel {
+		return
+	}
+	model, peeked := peekModelFromOpenAISSE(resp.Body)
+	// Restore body so the response still flows to the client.
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(peeked), resp.Body), resp.Body}
+	if model != "" {
+		logger.Debug().Str("backend_model", model).Int("bytes_read", len(peeked)).Msg("response model peek")
+	} else {
+		logger.Debug().Int("bytes_read", len(peeked)).Msg("response model peek: model not found")
+	}
 }

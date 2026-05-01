@@ -38,6 +38,7 @@ var validPoolingStrategies = map[string]bool{
 // Valid provider types.
 var validProviderTypes = map[string]bool{
 	"anthropic":     true,
+	"openai":        true,
 	"zai":           true,
 	"minimax":       true,
 	"ollama":        true,
@@ -72,6 +73,7 @@ func (c *Config) Validate() error {
 
 	validateServer(c, errs)
 	validateProviders(c, errs)
+	validateOpenAIProviders(c, errs)
 	validateRouting(c, errs)
 	validateLogging(c, errs)
 
@@ -167,7 +169,7 @@ func validateProvider(provider *ProviderConfig, index int, seenNames map[string]
 	if provider.Type == "" {
 		errs.Addf("%s is required", prefix("type"))
 	} else if !validProviderTypes[provider.Type] {
-		errs.Addf("%s is invalid (got %q, valid: anthropic, zai, ollama, bedrock, vertex, azure)",
+		errs.Addf("%s is invalid (got %q, valid: anthropic, openai, zai, ollama, bedrock, vertex, azure)",
 			prefix("type"), provider.Type)
 	}
 
@@ -282,5 +284,58 @@ func validateLogging(cfg *Config, errs *ValidationError) {
 	// MaxBodyLogSize must be non-negative
 	if cfg.Logging.DebugOptions.MaxBodyLogSize < 0 {
 		errs.Add("logging.debug_options.max_body_log_size must be >= 0")
+	}
+}
+
+// validateOpenAIProviders validates the openai_providers configuration section.
+func validateOpenAIProviders(cfg *Config, errs *ValidationError) {
+	if len(cfg.OpenAIProviders) == 0 {
+		return
+	}
+
+	seenNames := make(map[string]bool)
+
+	for idx := range cfg.OpenAIProviders {
+		validateOpenAIProvider(&cfg.OpenAIProviders[idx], idx, seenNames, errs)
+	}
+}
+
+// validateOpenAIProvider validates a single OpenAI provider configuration.
+func validateOpenAIProvider(provider *ProviderConfig, index int, seenNames map[string]bool, errs *ValidationError) {
+	prefix := func(field string) string {
+		if provider.Name != "" {
+			return fmt.Sprintf("openai_provider[%s].%s", provider.Name, field)
+		}
+		return fmt.Sprintf("openai_providers[%d].%s", index, field)
+	}
+
+	if provider.Name == "" {
+		errs.Addf("openai_providers[%d].name is required", index)
+	} else {
+		if seenNames[provider.Name] {
+			errs.Addf("duplicate openai provider name: %s", provider.Name)
+		}
+		seenNames[provider.Name] = true
+	}
+
+	if provider.Type == "" {
+		errs.Addf("%s is required", prefix("type"))
+	} else if !validProviderTypes[provider.Type] {
+		errs.Addf("%s is invalid (got %q, valid: anthropic, openai, zai, ollama, bedrock, vertex, azure)",
+			prefix("type"), provider.Type)
+	}
+
+	if provider.Type == "openai" && provider.BaseURL == "" {
+		errs.Addf("%s is required for openai provider", prefix("base_url"))
+	}
+
+	validateCloudProviderConfig(provider, prefix, errs)
+
+	for keyIdx, key := range provider.Keys {
+		validateProviderKey(&key, provider.Name, keyIdx, errs)
+	}
+
+	if provider.Pooling.Strategy != "" && !validPoolingStrategies[provider.Pooling.Strategy] {
+		errs.Addf("%s is invalid (got %q)", prefix("pooling.strategy"), provider.Pooling.Strategy)
 	}
 }

@@ -338,3 +338,71 @@ health:
     # Number of probe requests allowed in half-open state (default: 3)
     # If all succeed, circuit closes. If any fails, circuit reopens.
     half_open_probes: 3
+
+# ============================================================================
+# OpenAI-Compatible Providers
+# ============================================================================
+# These providers support the OpenAI Chat Completions API protocol.
+# Requests to /openai/v1/chat/completions are routed to these providers.
+# OpenAI requests NEVER route to Anthropic providers (and vice versa).
+#
+# openai_providers:
+#   # DeepSeek
+#   - name: "deepseek"
+#     type: "openai"
+#     base_url: "https://api.deepseek.com/v1"
+#     enabled: true
+#     models:
+#       - "deepseek-chat"
+#       - "deepseek-reasoner"
+#     keys:
+#       - key: "${DEEPSEEK_API_KEY}"
+#         rpm_limit: 60
+#     model_mapping:
+#       "gpt-4o": "deepseek-chat"
+#       "gpt-4o-mini": "deepseek-chat"
+#
+#   # Groq (fast inference)
+#   - name: "groq"
+#     type: "openai"
+#     base_url: "https://api.groq.com/openai/v1"
+#     enabled: true
+#     models:
+#       - "llama-3.3-70b-versatile"
+#       - "mixtral-8x7b-32768"
+#     keys:
+#       - key: "${GROQ_API_KEY}"
+#         rpm_limit: 30
+#
+#   # Together AI
+#   - name: "together"
+#     type: "openai"
+#     base_url: "https://api.together.xyz/v1"
+#     enabled: true
+#     models:
+#       - "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+#     keys:
+#       - key: "${TOGETHER_API_KEY}"
+#         rpm_limit: 60
+#
+#   # OpenRouter (multi-model gateway)
+#   - name: "openrouter"
+#     type: "openai"
+#     base_url: "https://openrouter.ai/api/v1"
+#     enabled: true
+#     models:
+#       - "anthropic/claude-sonnet-4-20250514"
+#       - "google/gemini-2.5-pro"
+#     keys:
+#       - key: "${OPENROUTER_API_KEY}"
+#         rpm_limit: 60
+#
+#   # Local vLLM
+#   - name: "local-vllm"
+#     type: "openai"
+#     base_url: "http://localhost:8000/v1"
+#     enabled: true
+#     models:
+#       - "meta-llama/Meta-Llama-3.1-8B-Instruct"
+#     keys:
+#       - key: "no-key-needed"

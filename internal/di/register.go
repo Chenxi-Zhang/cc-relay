@@ -17,7 +17,8 @@ import "github.com/samber/do/v2"
 // 11. SignatureCache (depends on Cache)
 // 12. Concurrency (depends on Config) - global request limiter
 // 13. Handler (depends on all above services)
-// 14. Server (depends on Handler, Config).
+// 14. Server (depends on Handler, Config)
+// 15-18. OpenAI services (parallel lane, shares Config/Router/Health/Concurrency).
 func RegisterSingletons(injector do.Injector) {
 	do.Provide(injector, NewConfig)
 	do.Provide(injector, NewLogger)
@@ -32,5 +33,9 @@ func RegisterSingletons(injector do.Injector) {
 	do.Provide(injector, NewSignatureCache)
 	do.Provide(injector, NewConcurrencyService)
 	do.Provide(injector, NewProxyHandler)
+	do.Provide(injector, NewOpenAIProviderMap)
+	do.Provide(injector, NewOpenAIKeyPoolMap)
+	do.Provide(injector, NewOpenAIProviderInfo)
+	do.Provide(injector, NewOpenAIHandler)
 	do.Provide(injector, NewHTTPServer)
 }

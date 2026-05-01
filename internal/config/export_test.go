@@ -17,8 +17,9 @@ var DetectFormat = detectFormat
 // MakeTestConfig returns a minimal valid Config with all fields set.
 func MakeTestConfig() *Config {
 	return &Config{
-		Providers: []ProviderConfig{},
-		Routing:   MakeTestRoutingConfig(),
+		Providers:       []ProviderConfig{},
+		OpenAIProviders: []ProviderConfig{},
+		Routing:         MakeTestRoutingConfig(),
 		Logging:   MakeTestLoggingConfig(),
 		Health:    MakeTestHealthConfig(),
 		Server:    MakeTestServerConfig(),

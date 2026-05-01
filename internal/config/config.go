@@ -61,8 +61,9 @@ const (
 
 // Config represents the complete cc-relay configuration.
 type Config struct {
-	Providers []ProviderConfig `yaml:"providers" toml:"providers"`
-	Routing   RoutingConfig    `yaml:"routing" toml:"routing"`
+	Providers       []ProviderConfig `yaml:"providers" toml:"providers"`
+	OpenAIProviders []ProviderConfig `yaml:"openai_providers" toml:"openai_providers"`
+	Routing         RoutingConfig    `yaml:"routing" toml:"routing"`
 	Logging   LoggingConfig    `yaml:"logging" toml:"logging"`
 	Health    health.Config    `yaml:"health" toml:"health"`
 	Server    ServerConfig     `yaml:"server" toml:"server"`

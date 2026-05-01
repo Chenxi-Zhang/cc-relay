@@ -2,8 +2,10 @@ package di
 
 import (
 	"context"
+	"net/http"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/samber/do/v2"
 
 	"github.com/omarluq/cc-relay/internal/proxy"
@@ -14,16 +16,23 @@ type ServerService struct {
 	Server *proxy.Server
 }
 
-// NewHTTPServer creates the HTTP server.
+// NewHTTPServer creates the HTTP server with both Anthropic and OpenAI routes.
 func NewHTTPServer(i do.Injector) (*ServerService, error) {
 	cfgSvc := do.MustInvoke[*ConfigService](i)
 	handlerSvc := do.MustInvoke[*HandlerService](i)
 
-	server := proxy.NewServer(
-		cfgSvc.Config.Server.Listen,
-		handlerSvc.Handler,
-		cfgSvc.Config.Server.EnableHTTP2,
-	)
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/", handlerSvc.Handler)
+
+	if len(cfgSvc.Config.OpenAIProviders) > 0 {
+		openaiSvc := do.MustInvoke[*OpenAIHandlerService](i)
+		rootMux.Handle("/openai/", openaiSvc.Handler)
+		log.Info().Int("count", len(cfgSvc.Config.OpenAIProviders)).Msg("openai providers mounted")
+	}
+
+	enableHTTP2 := cfgSvc.Config.Server.EnableHTTP2
+
+	server := proxy.NewServer(cfgSvc.Config.Server.Listen, rootMux, enableHTTP2)
 
 	return &ServerService{Server: server}, nil
 }
