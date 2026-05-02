@@ -285,30 +285,12 @@ func (h *OpenAIHandler) modifyResponse(resp *http.Response) error {
 }
 
 // getOrCreateOpenAIProxy returns the proxy for a provider, creating it lazily if needed.
+// Detects hot-reload changes by comparing key pool and API key pointers.
 func (h *OpenAIHandler) getOrCreateOpenAIProxy(prov providers.Provider) (*ProviderProxy, error) {
 	name := prov.Name()
 
-	h.proxyMu.RLock()
-	pp, exists := h.providerProxies[name]
-	h.proxyMu.RUnlock()
-
-	if exists && pp.Provider.Name() == name && pp.Provider.BaseURL() == prov.BaseURL() {
-		return pp, nil
-	}
-
-	h.proxyMu.Lock()
-	defer h.proxyMu.Unlock()
-
-	// Double-check after acquiring write lock.
-	pp, exists = h.providerProxies[name]
-	if exists && pp.Provider.Name() == name && pp.Provider.BaseURL() == prov.BaseURL() {
-		return pp, nil
-	}
-
-	// Resolve key and pool for this provider.
 	pools := h.resolvePools()
 	keys := h.resolveKeys()
-
 	apiKey := ""
 	if keys != nil {
 		apiKey = keys[name]
@@ -318,6 +300,24 @@ func (h *OpenAIHandler) getOrCreateOpenAIProxy(prov providers.Provider) (*Provid
 		pool = pools[name]
 	}
 
+	// Fast path
+	h.proxyMu.RLock()
+	pp, exists := h.providerProxies[name]
+	h.proxyMu.RUnlock()
+
+	if exists && h.openaiProxyMatches(pp, prov, keys, pools, apiKey, pool) {
+		return pp, nil
+	}
+
+	// Slow path: write lock
+	h.proxyMu.Lock()
+	defer h.proxyMu.Unlock()
+
+	pp, exists = h.providerProxies[name]
+	if exists && h.openaiProxyMatches(pp, prov, keys, pools, apiKey, pool) {
+		return pp, nil
+	}
+
 	newPP, err := NewProviderProxy(prov, apiKey, pool, h.debugOpts, h.modifyResponse)
 	if err != nil {
 		return nil, fmt.Errorf("create proxy for %s: %w", name, err)
@@ -325,6 +325,30 @@ func (h *OpenAIHandler) getOrCreateOpenAIProxy(prov providers.Provider) (*Provid
 
 	h.providerProxies[name] = newPP
 	return newPP, nil
+}
+
+// openaiProxyMatches checks if an existing proxy matches the current provider and auth inputs.
+// In single-key mode (nil maps), keys/pools always match to preserve handler construction values.
+func (h *OpenAIHandler) openaiProxyMatches(
+	pp *ProviderProxy,
+	prov providers.Provider,
+	keys map[string]string,
+	pools map[string]*keypool.KeyPool,
+	key string,
+	pool *keypool.KeyPool,
+) bool {
+	if pp == nil {
+		return false
+	}
+
+	if pp.Provider.Name() != prov.Name() || pp.Provider.BaseURL() != prov.BaseURL() {
+		return false
+	}
+
+	keysMatch := keys == nil || pp.APIKey == key
+	poolsMatch := pools == nil || pp.KeyPool == pool
+
+	return keysMatch && poolsMatch
 }
 
 // extractOpenAIModel extracts the model field from a JSON body.
