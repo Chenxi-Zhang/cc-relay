@@ -108,6 +108,20 @@ func (h *OpenAIHandler) resolveKeys() map[string]string {
 	return nil
 }
 
+// hasAvailableKeys returns true if the provider has no keypool (single-key mode)
+// or if its keypool has at least one available key.
+func (h *OpenAIHandler) hasAvailableKeys(provName string) bool {
+	pools := h.resolvePools()
+	if pools == nil {
+		return true
+	}
+	pool, ok := pools[provName]
+	if !ok || pool == nil {
+		return true
+	}
+	return pool.GetStats().AvailableKeys > 0
+}
+
 // ServeHTTP implements http.Handler for OpenAI Chat Completions.
 //
 // Flow:
@@ -153,7 +167,21 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	selected, err := h.router.Select(r.Context(), infos)
+	// Filter out providers whose keypool has no available keys.
+	eligible := make([]router.ProviderInfo, 0, len(infos))
+	for _, info := range infos {
+		if h.hasAvailableKeys(info.Provider.Name()) {
+			eligible = append(eligible, info)
+		}
+	}
+	if len(eligible) == 0 {
+		writeOpenAIError(w, http.StatusTooManyRequests,
+			"all provider keys exhausted",
+			"rate_limit_error", "keys_exhausted")
+		return
+	}
+
+	selected, err := h.router.Select(r.Context(), eligible)
 	if err != nil {
 		writeOpenAIError(w, http.StatusServiceUnavailable,
 			fmt.Sprintf("failed to select provider: %v", err),
@@ -239,12 +267,20 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // modifyResponse is the response hook for OpenAI proxied requests.
-// When debug logging is enabled, it peeks into the response body to extract
-// the actual backend model name and logs it, matching the pattern used by
-// the Anthropic handler's updateKeyPoolFromResponse.
 func (h *OpenAIHandler) modifyResponse(resp *http.Response) error {
 	logger := zerolog.Ctx(resp.Request.Context())
 	peekAndLogOpenAIModel(resp, logger)
+
+	providerName, _ := resp.Request.Context().Value(providerNameContextKey).(string)
+	if providerName != "" {
+		h.proxyMu.RLock()
+		pp, ok := h.providerProxies[providerName]
+		h.proxyMu.RUnlock()
+		if ok && pp.KeyPool != nil {
+			UpdateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
+		}
+	}
+
 	return nil
 }
 

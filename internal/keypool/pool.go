@@ -68,11 +68,12 @@ func NewKeyPool(provider string, cfg PoolConfig) (*KeyPool, error) {
 		return nil, fmt.Errorf("keypool: no keys configured for provider %s", provider)
 	}
 
-	// Create selector
-	selector, err := NewSelector(cfg.Strategy)
+	baseSelector, err := NewSelector(cfg.Strategy)
 	if err != nil {
 		return nil, fmt.Errorf("keypool: failed to create selector: %w", err)
 	}
+
+	selector := NewPriorityTierSelector(baseSelector)
 
 	pool := &KeyPool{
 		selector: selector,

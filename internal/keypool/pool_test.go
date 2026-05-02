@@ -84,7 +84,7 @@ func TestNewKeyPool(t *testing.T) {
 		pool := newTestPool(2, "round_robin")
 
 		assert.NotNil(t, pool.GetSelector())
-		assert.Equal(t, "round_robin", pool.GetSelector().Name())
+		assert.Equal(t, "priority_tier(round_robin)", pool.GetSelector().Name())
 	})
 
 	t.Run("initializes all keys with limiters", func(t *testing.T) {
