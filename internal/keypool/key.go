@@ -6,7 +6,7 @@
 //
 // Example usage:
 //
-//	key := keypool.NewKeyMetadata("sk-...", 50, 30000, 30000)
+//	key := keypool.NewKeyMetadata(0, "sk-...", 50, 30000, 30000)
 //	if key.IsAvailable() {
 //	    // Use key for request
 //	}
@@ -15,9 +15,7 @@
 package keypool
 
 import (
-	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"strconv"
 	"sync"
@@ -48,22 +46,13 @@ type KeyMetadata struct {
 }
 
 // NewKeyMetadata creates a new KeyMetadata with the given API key and rate limits.
-// The ID is generated from the first 8 characters of the FNV-1a hash of the key.
-// Initial state: full capacity, healthy, normal priority.
-//
-// Note: The hash is for identification/logging only, NOT for security comparison.
-// The key ID appears in logs for debugging purposes. It's not used for authentication.
-func NewKeyMetadata(apiKey string, rpm, itpm, otpm int) *KeyMetadata {
-	hasher := fnv.New64a()
-
-	var keyID string
-	if _, hashErr := hasher.Write([]byte(apiKey)); hashErr != nil {
-		// fnv hash.Write never returns an error per Go's hash.Hash contract,
-		// but we handle it defensively
-		keyID = "00000000"
-	} else {
-		keyID = hex.EncodeToString(hasher.Sum(nil))[:8]
+// The ID is formatted as "[idx-****last4]" for easy matching in logs.
+func NewKeyMetadata(idx int, apiKey string, rpm, itpm, otpm int) *KeyMetadata {
+	tail := "****"
+	if len(apiKey) > 4 {
+		tail = apiKey[len(apiKey)-4:]
 	}
+	keyID := fmt.Sprintf("[%d-****%s]", idx, tail)
 
 	return &KeyMetadata{
 		RPMResetAt:    time.Time{},

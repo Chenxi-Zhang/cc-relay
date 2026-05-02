@@ -20,7 +20,7 @@ func TestNewKeyMetadata(t *testing.T) {
 	itpm := 30000
 	otpm := 30000
 
-	key := keypool.NewKeyMetadata(sampleKeyInput, rpm, itpm, otpm)
+	key := keypool.NewKeyMetadata(0, sampleKeyInput, rpm, itpm, otpm)
 
 	assert.Equal(t, sampleKeyInput, key.APIKey)
 	assert.Equal(t, rpm, key.RPMLimit)
@@ -115,7 +115,7 @@ func TestGetCapacityScore(t *testing.T) {
 	for _, testCase := range capacityScoreTestCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			key := keypool.NewKeyMetadata("test-key", testCase.rpm, testCase.itpm, testCase.otpm)
+			key := keypool.NewKeyMetadata(0, "test-key", testCase.rpm, testCase.itpm, testCase.otpm)
 			key.RPMRemaining = testCase.rpmRemaining
 			key.ITPMRemaining = testCase.itpmRemaining
 			key.OTPMRemaining = testCase.otpmRemaining
@@ -173,7 +173,7 @@ func TestIsAvailable(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+			key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 			key.Healthy = testCase.healthy
 			key.CooldownUntil = testCase.cooldownUntil
 
@@ -188,7 +188,7 @@ func TestIsAvailable(t *testing.T) {
 // TestUpdateFromHeaders verifies response header parsing.
 func TestUpdateFromHeaders(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-requests-limit", "100")
@@ -219,7 +219,7 @@ func TestUpdateFromHeaders(t *testing.T) {
 // TestUpdateFromHeadersPartial verifies handling of missing headers.
 func TestUpdateFromHeadersPartial(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	// Set only some headers
 	headers := http.Header{}
@@ -235,7 +235,7 @@ func TestUpdateFromHeadersPartial(t *testing.T) {
 // TestUpdateFromHeadersInvalid verifies handling of invalid header values.
 func TestUpdateFromHeadersInvalid(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	headers := http.Header{}
 	headers.Set("anthropic-ratelimit-requests-limit", "invalid")
@@ -252,7 +252,7 @@ func TestUpdateFromHeadersInvalid(t *testing.T) {
 // TestSetCooldown verifies cooldown setting.
 func TestSetCooldown(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	cooldownUntil := time.Now().Add(5 * time.Minute)
 	key.SetCooldown(cooldownUntil)
@@ -267,7 +267,7 @@ func TestSetCooldown(t *testing.T) {
 // TestMarkUnhealthy verifies unhealthy marking.
 func TestMarkUnhealthy(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	testErr := http.ErrServerClosed
 	key.MarkUnhealthy(testErr)
@@ -281,7 +281,7 @@ func TestMarkUnhealthy(t *testing.T) {
 // TestMarkHealthy verifies health recovery.
 func TestMarkHealthy(t *testing.T) {
 	t.Parallel()
-	key := keypool.NewKeyMetadata("test-key", 50, 30000, 30000)
+	key := keypool.NewKeyMetadata(0, "test-key", 50, 30000, 30000)
 
 	key.MarkUnhealthy(http.ErrServerClosed)
 	key.MarkHealthy()
@@ -300,9 +300,9 @@ func TestLeastLoadedSelector(t *testing.T) {
 
 	// Create keys with different capacity levels
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000), // Full capacity
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000), // Will set to half
-		keypool.NewKeyMetadata("key3", 50, 30000, 30000), // Will set to quarter
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000), // Full capacity
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000), // Will set to half
+		keypool.NewKeyMetadata(0, "key3", 50, 30000, 30000), // Will set to quarter
 	}
 
 	// Set different remaining capacities
@@ -326,8 +326,8 @@ func TestLeastLoadedSelectorSkipsUnhealthy(t *testing.T) {
 	selector := keypool.NewLeastLoadedSelector()
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
 	}
 
 	keys[0].MarkUnhealthy(http.ErrServerClosed)
@@ -346,8 +346,8 @@ func TestLeastLoadedSelectorAllExhausted(t *testing.T) {
 	selector := keypool.NewLeastLoadedSelector()
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
 	}
 
 	keys[0].MarkUnhealthy(http.ErrServerClosed)
@@ -365,9 +365,9 @@ func TestRoundRobinSelector(t *testing.T) {
 	assert.Equal(t, keypool.StrategyRoundRobin, selector.Name())
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key3", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key3", 50, 30000, 30000),
 	}
 
 	selected1, err := selector.Select(keys)
@@ -406,9 +406,9 @@ func TestRoundRobinSelectorSkipsUnavailable(t *testing.T) {
 	selector := keypool.NewRoundRobinSelector()
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key3", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key3", 50, 30000, 30000),
 	}
 
 	keys[1].SetCooldown(time.Now().Add(5 * time.Minute))
@@ -426,9 +426,9 @@ func TestRoundRobinSelectorConcurrent(t *testing.T) {
 	selector := keypool.NewRoundRobinSelector()
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key3", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key3", 50, 30000, 30000),
 	}
 
 	var waitGroup sync.WaitGroup
@@ -457,8 +457,8 @@ func TestRoundRobinSelectorAllExhausted(t *testing.T) {
 	selector := keypool.NewRoundRobinSelector()
 
 	keys := []*keypool.KeyMetadata{
-		keypool.NewKeyMetadata("key1", 50, 30000, 30000),
-		keypool.NewKeyMetadata("key2", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key1", 50, 30000, 30000),
+		keypool.NewKeyMetadata(0, "key2", 50, 30000, 30000),
 	}
 
 	keys[0].MarkUnhealthy(http.ErrServerClosed)
@@ -535,7 +535,7 @@ func TestNewSelector(t *testing.T) {
 func createTestKeys(capacities []float64) []*keypool.KeyMetadata {
 	keys := make([]*keypool.KeyMetadata, len(capacities))
 	for keyIdx, capacity := range capacities {
-		key := keypool.NewKeyMetadata("key"+string(rune('1'+keyIdx)), 100, 60000, 60000)
+		key := keypool.NewKeyMetadata(keyIdx, "key"+string(rune('1'+keyIdx)), 100, 60000, 60000)
 		// Set remaining based on capacity percentage
 		key.RPMRemaining = int(float64(key.RPMLimit) * capacity)
 		key.ITPMRemaining = int(float64(key.ITPMLimit) * capacity)

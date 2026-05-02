@@ -135,7 +135,7 @@ func benchmarkSelector(b *testing.B, selector keypool.KeySelector) {
 	for _, size := range sizes {
 		keys := make([]*keypool.KeyMetadata, size)
 		for idx := range keys {
-			keys[idx] = keypool.NewKeyMetadata("sk-test-"+string(rune('A'+idx%26)), 50, 30000, 30000)
+			keys[idx] = keypool.NewKeyMetadata(idx, "sk-test-"+string(rune('A'+idx%26)), 50, 30000, 30000)
 		}
 
 		b.Run("size="+fmt.Sprintf("%d", size), func(b *testing.B) {

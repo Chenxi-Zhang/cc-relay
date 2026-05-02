@@ -86,7 +86,7 @@ func NewKeyPool(provider string, cfg PoolConfig) (*KeyPool, error) {
 	// Initialize keys and limiters
 	for idx, keyCfg := range cfg.Keys {
 		// Create key metadata
-		key := NewKeyMetadata(keyCfg.APIKey, keyCfg.RPMLimit, keyCfg.ITPMLimit, keyCfg.OTPMLimit)
+		key := NewKeyMetadata(idx, keyCfg.APIKey, keyCfg.RPMLimit, keyCfg.ITPMLimit, keyCfg.OTPMLimit)
 
 		// Set priority and weight
 		if keyCfg.Priority > 0 {

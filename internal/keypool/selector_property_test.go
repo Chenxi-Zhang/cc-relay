@@ -277,7 +277,7 @@ func createTestKeysWithVaryingCapacity(numKeys int) []*keypool.KeyMetadata {
 	for keyIdx := range numKeys {
 		rpm := 100
 		remaining := (keyIdx + 1) * 10
-		keys[keyIdx] = keypool.NewKeyMetadata(fmt.Sprintf("sk-test-varied-%d", keyIdx), rpm, 10000, 10000)
+		keys[keyIdx] = keypool.NewKeyMetadata(keyIdx, fmt.Sprintf("sk-test-varied-%d", keyIdx), rpm, 10000, 10000)
 		keys[keyIdx].TestLock()
 		keys[keyIdx].RPMRemaining = remaining
 		keys[keyIdx].ITPMRemaining = (keyIdx + 1) * 1000
@@ -290,7 +290,7 @@ func createTestKeysWithVaryingCapacity(numKeys int) []*keypool.KeyMetadata {
 func createHealthyKeys(numKeys int) []*keypool.KeyMetadata {
 	keys := make([]*keypool.KeyMetadata, numKeys)
 	for keyIdx := range numKeys {
-		keys[keyIdx] = keypool.NewKeyMetadata(fmt.Sprintf("sk-test-healthy-%d", keyIdx), 100, 10000, 10000)
+		keys[keyIdx] = keypool.NewKeyMetadata(keyIdx, fmt.Sprintf("sk-test-healthy-%d", keyIdx), 100, 10000, 10000)
 	}
 	return keys
 }
@@ -298,7 +298,7 @@ func createHealthyKeys(numKeys int) []*keypool.KeyMetadata {
 func createUnavailableKeys(numKeys int) []*keypool.KeyMetadata {
 	keys := make([]*keypool.KeyMetadata, numKeys)
 	for keyIdx := range numKeys {
-		keys[keyIdx] = keypool.NewKeyMetadata(fmt.Sprintf("sk-test-unavail-%d", keyIdx), 100, 10000, 10000)
+		keys[keyIdx] = keypool.NewKeyMetadata(keyIdx, fmt.Sprintf("sk-test-unavail-%d", keyIdx), 100, 10000, 10000)
 		keys[keyIdx].MarkUnhealthy(fmt.Errorf("test error"))
 	}
 	return keys
@@ -307,7 +307,7 @@ func createUnavailableKeys(numKeys int) []*keypool.KeyMetadata {
 func createMixedAvailabilityKeys(total, unavailable int) []*keypool.KeyMetadata {
 	keys := make([]*keypool.KeyMetadata, total)
 	for keyIdx := range total {
-		keys[keyIdx] = keypool.NewKeyMetadata(fmt.Sprintf("sk-test-mixed-%d", keyIdx), 100, 10000, 10000)
+		keys[keyIdx] = keypool.NewKeyMetadata(keyIdx, fmt.Sprintf("sk-test-mixed-%d", keyIdx), 100, 10000, 10000)
 		if keyIdx < unavailable {
 			keys[keyIdx].MarkUnhealthy(fmt.Errorf("test error"))
 		}
