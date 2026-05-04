@@ -30,6 +30,7 @@ const openAIRoutesRequiredMsg = "openai routes options are required"
 // Routes:
 //   - POST /openai/v1/chat/completions — OpenAI Chat Completions
 //   - GET /openai/v1/models — OpenAI model listing
+//   - GET /openai/v1/providers — OpenAI provider key status
 //
 // No auth middleware is applied (local deployment per user decision).
 // Middleware order (outermost first):
@@ -52,6 +53,14 @@ func SetupOpenAIRoutes(mux *http.ServeMux, opts *OpenAIRoutesOptions) error {
 	providersGetter := openAILiveProvidersGetter(opts)
 	mux.Handle("GET /openai/v1/models", NewOpenAIModelsHandlerWithProviderFunc(providersGetter))
 
+	poolsGetter := func() map[string]*keypool.KeyPool {
+		if opts.GetProviderPools != nil {
+			return opts.GetProviderPools()
+		}
+		return opts.ProviderPools
+	}
+	mux.Handle("GET /openai/v1/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
+
 	return nil
 }
 
@@ -64,6 +73,7 @@ func buildOpenAIChatHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
 		GetProviderPools: opts.GetProviderPools,
 		GetProviderKeys:  opts.GetProviderKeys,
 		DebugOptions:     opts.DebugOptions,
+		ConfigProvider:   opts.ConfigProvider,
 	})
 	if err != nil {
 		return nil, err

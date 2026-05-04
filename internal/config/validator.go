@@ -35,6 +35,14 @@ var validPoolingStrategies = map[string]bool{
 	"weighted":     true,
 }
 
+// Valid cooldown strategies.
+var validCooldownStrategies = map[string]bool{
+	"":        true, // auto-detect
+	"generic": true,
+	"openai":  true,
+	"zai":     true,
+}
+
 // Valid provider types.
 var validProviderTypes = map[string]bool{
 	"anthropic":     true,
@@ -184,6 +192,12 @@ func validateProvider(provider *ProviderConfig, index int, seenNames map[string]
 	// Validate pooling strategy if set
 	if provider.Pooling.Strategy != "" && !validPoolingStrategies[provider.Pooling.Strategy] {
 		errs.Addf("%s is invalid (got %q)", prefix("pooling.strategy"), provider.Pooling.Strategy)
+	}
+
+	// Validate cooldown strategy if set
+	if !validCooldownStrategies[provider.CooldownStrategy] {
+		errs.Addf("%s is invalid (got %q, valid: generic, openai, zai)",
+			prefix("cooldown_strategy"), provider.CooldownStrategy)
 	}
 }
 
@@ -337,5 +351,10 @@ func validateOpenAIProvider(provider *ProviderConfig, index int, seenNames map[s
 
 	if provider.Pooling.Strategy != "" && !validPoolingStrategies[provider.Pooling.Strategy] {
 		errs.Addf("%s is invalid (got %q)", prefix("pooling.strategy"), provider.Pooling.Strategy)
+	}
+
+	if !validCooldownStrategies[provider.CooldownStrategy] {
+		errs.Addf("%s is invalid (got %q, valid: generic, openai, zai)",
+			prefix("cooldown_strategy"), provider.CooldownStrategy)
 	}
 }

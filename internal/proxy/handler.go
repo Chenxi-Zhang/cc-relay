@@ -258,6 +258,13 @@ func (h *Handler) isRoutingDebugEnabled() bool {
 	return h.routingDebug
 }
 
+func (h *Handler) resolveCooldownStrategy(providerName string) string {
+	if cfg := h.getRuntimeConfigGetter(); cfg != nil {
+		return cfg.FindProviderCooldownStrategy(providerName)
+	}
+	return "generic"
+}
+
 // modifyResponse handles key pool updates and circuit breaker reporting.
 // SSE headers are handled by ProviderProxy.modifyResponse before this is called.
 func (h *Handler) modifyResponse(resp *http.Response) error {
@@ -289,7 +296,8 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 					}
 				}
 			}
-			skipCircuitBreaker = UpdateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
+			cooldownStrategy := h.resolveCooldownStrategy(providerName)
+			skipCircuitBreaker = UpdateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider, cooldownStrategy)
 		}
 	}
 

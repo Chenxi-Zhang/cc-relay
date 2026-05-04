@@ -311,6 +311,9 @@ type ProviderConfig struct {
 	Pooling            PoolingConfig     `yaml:"pooling" toml:"pooling"`
 	Enabled            bool              `yaml:"enabled" toml:"enabled"`
 	AuthMethod         string            `yaml:"auth_method" toml:"auth_method"` // "x-api-key" (default) or "bearer"
+	// CooldownStrategy selects the 429 cooldown resolver for this provider.
+	// Options: "zai", "openai", "generic", "" (auto-detect from type).
+	CooldownStrategy   string            `yaml:"cooldown_strategy" toml:"cooldown_strategy"`
 }
 
 // PoolingConfig defines key pool behavior for a provider.
@@ -335,6 +338,35 @@ func (p *ProviderConfig) IsPoolingEnabled() bool {
 	}
 	// Default: enable if multiple keys
 	return len(p.Keys) > 1
+}
+
+// GetCooldownStrategy returns the cooldown strategy name, auto-detecting from type if empty.
+func (p *ProviderConfig) GetCooldownStrategy() string {
+	if p.CooldownStrategy != "" {
+		return p.CooldownStrategy
+	}
+	switch p.Type {
+	case "zai":
+		return "zai"
+	default:
+		return "generic"
+	}
+}
+
+// FindProviderCooldownStrategy returns the cooldown strategy for a named provider.
+// Falls back to "generic" if the provider is not found.
+func (c *Config) FindProviderCooldownStrategy(providerName string) string {
+	for i := range c.Providers {
+		if c.Providers[i].Name == providerName {
+			return c.Providers[i].GetCooldownStrategy()
+		}
+	}
+	for i := range c.OpenAIProviders {
+		if c.OpenAIProviders[i].Name == providerName {
+			return c.OpenAIProviders[i].GetCooldownStrategy()
+		}
+	}
+	return "generic"
 }
 
 // GetAzureAPIVersion returns the Azure API version with default fallback.

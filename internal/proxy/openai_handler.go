@@ -26,6 +26,7 @@ type OpenAIHandlerOptions struct {
 	GetProviderPools KeyPoolsFunc
 	GetProviderKeys  KeysFunc
 	DebugOptions     config.DebugOptions
+	ConfigProvider   config.RuntimeConfigGetter
 }
 
 // OpenAIHandler handles OpenAI Chat Completions API requests.
@@ -38,6 +39,7 @@ type OpenAIHandler struct {
 	providerProxies  map[string]*ProviderProxy
 	proxyMu          sync.RWMutex
 	debugOpts        config.DebugOptions
+	configProvider   config.RuntimeConfigGetter
 }
 
 // NewOpenAIHandler creates a new handler for OpenAI-format requests.
@@ -59,6 +61,7 @@ func NewOpenAIHandler(opts *OpenAIHandlerOptions) (*OpenAIHandler, error) {
 		getProviderKeys:  opts.GetProviderKeys,
 		providerProxies:  make(map[string]*ProviderProxy),
 		debugOpts:        opts.DebugOptions,
+		configProvider:   opts.ConfigProvider,
 	}
 
 	// Pre-create proxies for initial provider set.
@@ -266,6 +269,16 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pp.Proxy.ServeHTTP(w, r)
 }
 
+// resolveCooldownStrategy returns the cooldown strategy for a provider from live config.
+func (h *OpenAIHandler) resolveCooldownStrategy(providerName string) string {
+	if h.configProvider != nil {
+		if cfg := h.configProvider.Get(); cfg != nil {
+			return cfg.FindProviderCooldownStrategy(providerName)
+		}
+	}
+	return "generic"
+}
+
 // modifyResponse is the response hook for OpenAI proxied requests.
 func (h *OpenAIHandler) modifyResponse(resp *http.Response) error {
 	logger := zerolog.Ctx(resp.Request.Context())
@@ -277,7 +290,8 @@ func (h *OpenAIHandler) modifyResponse(resp *http.Response) error {
 		pp, ok := h.providerProxies[providerName]
 		h.proxyMu.RUnlock()
 		if ok && pp.KeyPool != nil {
-			UpdateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider)
+			cooldownStrategy := h.resolveCooldownStrategy(providerName)
+			UpdateKeyPoolFromResponse(resp, pp.KeyPool, pp.Provider, cooldownStrategy)
 		}
 	}
 
