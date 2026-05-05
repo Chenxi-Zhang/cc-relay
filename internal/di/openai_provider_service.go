@@ -79,8 +79,13 @@ func (s *OpenAIProviderMapService) RebuildFrom(cfg *config.Config) error {
 		providerMap[providerCfg.Name] = prov
 		allProviders = append(allProviders, prov)
 
-		if primaryKey == "" && len(providerCfg.Keys) > 0 {
-			primaryKey = providerCfg.Keys[0].Key
+		if primaryKey == "" {
+			for _, keyCfg := range providerCfg.Keys {
+				if keyCfg.IsEnabled() {
+					primaryKey = keyCfg.Key
+					break
+				}
+			}
 		}
 	}
 
@@ -148,8 +153,13 @@ func NewOpenAIProviderMap(i do.Injector) (*OpenAIProviderMapService, error) {
 		svc.Providers[providerCfg.Name] = prov
 		svc.AllProviders = append(svc.AllProviders, prov)
 
-		if svc.PrimaryKey == "" && len(providerCfg.Keys) > 0 {
-			svc.PrimaryKey = providerCfg.Keys[0].Key
+		if svc.PrimaryKey == "" {
+			for _, keyCfg := range providerCfg.Keys {
+				if keyCfg.IsEnabled() {
+					svc.PrimaryKey = keyCfg.Key
+					break
+				}
+			}
 		}
 	}
 

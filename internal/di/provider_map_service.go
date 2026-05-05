@@ -115,8 +115,11 @@ func (s *ProviderMapService) RebuildFrom(cfg *config.Config) error {
 
 		if primaryProvider == nil {
 			primaryProvider = prov
-			if len(providerCfg.Keys) > 0 {
-				primaryKey = providerCfg.Keys[0].Key
+			for _, keyCfg := range providerCfg.Keys {
+				if keyCfg.IsEnabled() {
+					primaryKey = keyCfg.Key
+					break
+				}
 			}
 		}
 	}
@@ -197,8 +200,11 @@ func NewProviderMap(i do.Injector) (*ProviderMapService, error) {
 		// First enabled provider becomes the primary
 		if primaryProvider == nil {
 			primaryProvider = prov
-			if len(providerCfg.Keys) > 0 {
-				primaryKey = providerCfg.Keys[0].Key
+			for _, keyCfg := range providerCfg.Keys {
+				if keyCfg.IsEnabled() {
+					primaryKey = keyCfg.Key
+					break
+				}
 			}
 		}
 	}

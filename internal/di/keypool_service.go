@@ -29,12 +29,19 @@ type KeyPoolService struct {
 }
 
 func buildPoolConfig(providerCfg *config.ProviderConfig) keypool.PoolConfig {
-	poolCfg := keypool.PoolConfig{
-		Strategy: providerCfg.GetEffectiveStrategy(),
-		Keys:     make([]keypool.KeyConfig, len(providerCfg.Keys)),
+	var enabledKeys []config.KeyConfig
+	for _, keyCfg := range providerCfg.Keys {
+		if keyCfg.IsEnabled() {
+			enabledKeys = append(enabledKeys, keyCfg)
+		}
 	}
 
-	for keyIdx, keyCfg := range providerCfg.Keys {
+	poolCfg := keypool.PoolConfig{
+		Strategy: providerCfg.GetEffectiveStrategy(),
+		Keys:     make([]keypool.KeyConfig, len(enabledKeys)),
+	}
+
+	for keyIdx, keyCfg := range enabledKeys {
 		itpm, otpm := keyCfg.GetEffectiveTPM()
 		poolCfg.Keys[keyIdx] = keypool.KeyConfig{
 			APIKey:    keyCfg.Key,
@@ -188,9 +195,12 @@ func (s *KeyPoolMapService) RebuildFrom(cfg *config.Config) error {
 			continue
 		}
 
-		// Store fallback key (first key in list)
-		if len(providerCfg.Keys) > 0 {
-			keys[providerCfg.Name] = providerCfg.Keys[0].Key
+		// Store fallback key (first enabled key)
+		for _, keyCfg := range providerCfg.Keys {
+			if keyCfg.IsEnabled() {
+				keys[providerCfg.Name] = keyCfg.Key
+				break
+			}
 		}
 
 		// Skip pool creation if pooling not enabled for this provider

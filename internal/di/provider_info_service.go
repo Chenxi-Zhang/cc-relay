@@ -68,9 +68,12 @@ func (s *ProviderInfoService) RebuildFrom(cfg *config.Config) {
 
 		// Get weight and priority from first key (provider-level defaults)
 		var weight, priority int
-		if len(providerCfg.Keys) > 0 {
-			weight = providerCfg.Keys[0].Weight
-			priority = providerCfg.Keys[0].Priority
+		for _, keyCfg := range providerCfg.Keys {
+			if keyCfg.IsEnabled() {
+				weight = keyCfg.Weight
+				priority = keyCfg.Priority
+				break
+			}
 		}
 
 		// Wire IsHealthy from tracker

@@ -48,8 +48,11 @@ func (s *OpenAIKeyPoolMapService) RebuildFrom(cfg *config.Config) error {
 			continue
 		}
 
-		if len(providerCfg.Keys) > 0 {
-			keys[providerCfg.Name] = providerCfg.Keys[0].Key
+		for _, keyCfg := range providerCfg.Keys {
+			if keyCfg.IsEnabled() {
+				keys[providerCfg.Name] = keyCfg.Key
+				break
+			}
 		}
 
 		if !providerCfg.IsPoolingEnabled() {

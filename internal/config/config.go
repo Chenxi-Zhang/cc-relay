@@ -408,8 +408,18 @@ type KeyConfig struct {
 	Priority  int    `yaml:"priority" toml:"priority"`     // Selection priority: 0=low, 1=normal (default), 2=high
 	Weight    int    `yaml:"weight" toml:"weight"`         // For weighted selection strategy (default: 1)
 
+	// Enabled controls whether this key is active. Defaults to true when nil (not set).
+	// Set to explicit false to disable a key without removing it from config.
+	Enabled *bool `yaml:"enabled,omitempty" toml:"enabled,omitempty"`
+
 	// Deprecated: Use ITPMLimit + OTPMLimit instead
 	TPMLimit int `yaml:"tpm_limit" toml:"tpm_limit"`
+}
+
+// IsEnabled returns true if the key is enabled.
+// Defaults to true when Enabled is nil (not explicitly set) for backwards compatibility.
+func (k *KeyConfig) IsEnabled() bool {
+	return k.Enabled == nil || *k.Enabled
 }
 
 // GetEffectiveTPM returns the combined TPM limit for backwards compatibility.
