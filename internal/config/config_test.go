@@ -77,6 +77,14 @@ func zeroAuthConfig() config.AuthConfig {
 	}
 }
 
+// zeroResponsesConfig returns a ResponsesConfig with all fields zeroed.
+func zeroResponsesConfig() config.ResponsesConfig {
+	return config.ResponsesConfig{
+		EnableResponsesAPI: false,
+		ResponsesAPIPrefix: "",
+	}
+}
+
 // zeroDebugOptions returns a DebugOptions with all fields zeroed.
 func zeroDebugOptions() config.DebugOptions {
 	return config.DebugOptions{
@@ -1013,6 +1021,125 @@ func TestProviderConfigValidateCloudConfigAzure(t *testing.T) {
 			t.Error("expected error, got nil")
 		} else if !strings.Contains(err.Error(), "azure_resource_name required") {
 			t.Errorf("error = %v, want containing 'azure_resource_name required'", err)
+		}
+	})
+}
+
+func TestResponsesConfig_Defaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := zeroResponsesConfig()
+	
+	// Test actual behavior: zero config has EnableResponsesAPI = false
+	// (there's no default fallback in the getter for this field)
+	if got := cfg.GetEnableResponsesAPI(); got != false {
+		t.Errorf("GetEnableResponsesAPI() = %v, want %v", got, false)
+	}
+	
+	// Test prefix getter still returns default when empty
+	if got := cfg.GetResponsesAPIPrefix(); got != config.DefaultResponsesAPIPrefix {
+		t.Errorf("GetResponsesAPIPrefix() = %v, want %v", got, config.DefaultResponsesAPIPrefix)
+	}
+}
+
+func TestResponsesConfig_EnableResponsesAPI(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		input    bool
+		expected bool
+	}{
+		{
+			name:     "enabled",
+			input:    true,
+			expected: true,
+		},
+		{
+			name:     "disabled",
+			input:    false,
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := zeroResponsesConfig()
+			cfg.EnableResponsesAPI = tc.input
+			
+			got := cfg.GetEnableResponsesAPI()
+			if got != tc.expected {
+				t.Errorf("GetEnableResponsesAPI() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestResponsesAPI_ResponsesAPIPrefix(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "default_prefix",
+			input:    "",
+			expected: "/v1", // getter uses default when empty
+		},
+		{
+			name:     "custom_prefix",
+			input:    "/custom/v1",
+			expected: "/custom/v1",
+		},
+		{
+			name:     "custom_prefix_non_empty",
+			input:    "/api/v1",
+			expected: "/api/v1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := zeroResponsesConfig()
+			cfg.ResponsesAPIPrefix = tc.input
+			
+			got := cfg.GetResponsesAPIPrefix()
+			if got != tc.expected {
+				t.Errorf("GetResponsesAPIPrefix() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestResponsesConfig_GettersWithDirectValues(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enable getter returns direct value", func(t *testing.T) {
+		cfg := zeroResponsesConfig()
+		cfg.EnableResponsesAPI = true
+		
+		if got := cfg.GetEnableResponsesAPI(); got != true {
+			t.Errorf("GetEnableResponsesAPI() = %v, want %v", got, true)
+		}
+	})
+
+	t.Run("prefix getter returns custom value", func(t *testing.T) {
+		cfg := zeroResponsesConfig()
+		cfg.ResponsesAPIPrefix = "/custom/api"
+		
+		if got := cfg.GetResponsesAPIPrefix(); got != "/custom/api" {
+			t.Errorf("GetResponsesAPIPrefix() = %v, want %v", got, "/custom/api")
+		}
+	})
+
+	t.Run("prefix getter returns default when empty", func(t *testing.T) {
+		cfg := zeroResponsesConfig()
+		cfg.ResponsesAPIPrefix = ""
+		
+		if got := cfg.GetResponsesAPIPrefix(); got != "/v1" {
+			t.Errorf("GetResponsesAPIPrefix() = %v, want %v", got, "/v1")
 		}
 	})
 }

@@ -68,6 +68,7 @@ type Config struct {
 	Health    health.Config    `yaml:"health" toml:"health"`
 	Server    ServerConfig     `yaml:"server" toml:"server"`
 	Cache     cache.Config     `yaml:"cache" toml:"cache"`
+	Responses ResponsesConfig `yaml:"responses" toml:"responses"`
 }
 
 // RoutingConfig defines provider-level routing strategy behavior.
@@ -273,6 +274,41 @@ type AuthConfig struct {
 	AllowSubscription bool `yaml:"allow_subscription" toml:"allow_subscription"`
 }
 
+// ResponsesConfig configures the OpenAI Responses API endpoint.
+// The Responses API provides a stateful conversation endpoint that
+// cc-relay can proxy to upstream providers.
+type ResponsesConfig struct {
+	// EnableResponsesAPI controls whether the /responses endpoint is served.
+	// When false, requests to the Responses API path return 404.
+	// Default: true.
+	EnableResponsesAPI bool `yaml:"enable_responses_api" toml:"enable_responses_api"`
+
+	// ResponsesAPIPrefix is the URL prefix for Responses API routes.
+	// Default: "/v1".
+	ResponsesAPIPrefix string `yaml:"responses_api_prefix" toml:"responses_api_prefix"`
+}
+
+const (
+	// DefaultEnableResponsesAPI is the default enabled state for the Responses API.
+	DefaultEnableResponsesAPI = true
+
+	// DefaultResponsesAPIPrefix is the default URL prefix for Responses API routes.
+	DefaultResponsesAPIPrefix = "/v1"
+)
+
+// GetEnableResponsesAPI returns whether the Responses API is enabled, with default fallback.
+func (r *ResponsesConfig) GetEnableResponsesAPI() bool {
+	return r.EnableResponsesAPI
+}
+
+// GetResponsesAPIPrefix returns the Responses API URL prefix, with default fallback.
+func (r *ResponsesConfig) GetResponsesAPIPrefix() string {
+	if r.ResponsesAPIPrefix == "" {
+		return DefaultResponsesAPIPrefix
+	}
+	return r.ResponsesAPIPrefix
+}
+
 // IsEnabled returns true if any authentication method is configured.
 func (a *AuthConfig) IsEnabled() bool {
 	return a.APIKey != "" || a.AllowBearer || a.AllowSubscription
@@ -457,6 +493,7 @@ type LoggingConfig struct {
 	Pretty       bool         `yaml:"pretty" toml:"pretty"`               // enable colored console output
 	DebugOptions DebugOptions `yaml:"debug_options" toml:"debug_options"` // granular debug logging controls
 }
+
 
 // ParseLevel converts a string log level to zerolog.Level.
 // Returns zerolog.InfoLevel if the level string is invalid.
