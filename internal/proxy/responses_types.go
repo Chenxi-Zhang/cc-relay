@@ -24,11 +24,21 @@ type ResponsesAPIRequest struct {
 }
 
 // InputItem represents an item in the input array for Responses API
-// This is a union type that can be either a message or a function call output
+// This is a union type that can be a message, a function call, or a function call output
 type InputItem struct {
-	Type       string           `json:"type"`
-	Message    *MessageInput    `json:"message,omitempty"`
+	Type               string              `json:"type"`
+	Message            *MessageInput       `json:"message,omitempty"`
+	FunctionCallInput  *FunctionCallInput  `json:"function_call_input,omitempty"`
 	FunctionCallOutput *FunctionCallOutput `json:"function_call_output,omitempty"`
+}
+
+// FunctionCallInput represents a function_call input item from a previous assistant turn.
+// In Chat Completions, these map to assistant messages with tool_calls.
+type FunctionCallInput struct {
+	ID        string `json:"id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // MessageInput represents a message input item
@@ -222,6 +232,12 @@ func (i *InputItem) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		i.Message = &message
+	case "function_call":
+		var fci FunctionCallInput
+		if err := json.Unmarshal(data, &fci); err != nil {
+			return err
+		}
+		i.FunctionCallInput = &fci
 	case "function_call_output":
 		var functionCallOutput FunctionCallOutput
 		if err := json.Unmarshal(data, &struct {
@@ -261,6 +277,17 @@ func (i InputItem) MarshalJSON() ([]byte, error) {
 		}{
 			Type:              i.Type,
 			FunctionCallOutput: i.FunctionCallOutput,
+		})
+	case "function_call":
+		if i.FunctionCallInput == nil {
+			return nil, fmt.Errorf("InputItem of type function_call: function_call_input is nil")
+		}
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			*FunctionCallInput
+		}{
+			Type:              i.Type,
+			FunctionCallInput: i.FunctionCallInput,
 		})
 	default:
 		return json.Marshal(struct {

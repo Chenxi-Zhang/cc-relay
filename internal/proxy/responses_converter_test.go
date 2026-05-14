@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -487,6 +488,15 @@ func TestConvertRequest_WithFunctionCallOutput(t *testing.T) {
 		Input: []InputItem{
 			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "What's the weather in NYC?", IsString: true}}},
 			{
+				Type: "function_call",
+				FunctionCallInput: &FunctionCallInput{
+					ID:        "fc_001",
+					CallID:    "call_abc123",
+					Name:      "get_weather",
+					Arguments: `{"city": "NYC"}`,
+				},
+			},
+			{
 				Type: "function_call_output",
 				FunctionCallOutput: &FunctionCallOutput{
 					CallID: "call_abc123",
@@ -500,14 +510,22 @@ func TestConvertRequest_WithFunctionCallOutput(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	require.Len(t, result.Messages, 2)
+	// user → assistant(tool_calls) → tool
+	require.Len(t, result.Messages, 3)
 	assert.Equal(t, "user", result.Messages[0].Role)
 	assert.Equal(t, "What's the weather in NYC?", result.Messages[0].Content)
 
-	// function_call_output becomes a tool role message
-	assert.Equal(t, "tool", result.Messages[1].Role)
-	assert.Equal(t, `{"temperature": 72, "condition": "sunny"}`, result.Messages[1].Content)
-	assert.Equal(t, "call_abc123", result.Messages[1].ToolCallID)
+	// function_call becomes assistant message with tool_calls
+	assert.Equal(t, "assistant", result.Messages[1].Role)
+	require.Len(t, result.Messages[1].ToolCalls, 1)
+	assert.Equal(t, "call_abc123", result.Messages[1].ToolCalls[0].ID)
+	assert.Equal(t, "get_weather", result.Messages[1].ToolCalls[0].Function.Name)
+	assert.Equal(t, `{"city": "NYC"}`, result.Messages[1].ToolCalls[0].Function.Arguments)
+
+	// function_call_output becomes tool role message
+	assert.Equal(t, "tool", result.Messages[2].Role)
+	assert.Equal(t, `{"temperature": 72, "condition": "sunny"}`, result.Messages[2].Content)
+	assert.Equal(t, "call_abc123", result.Messages[2].ToolCallID)
 }
 
 func TestConvertRequest_MixedMessagesAndFunctionOutputs(t *testing.T) {
@@ -518,7 +536,15 @@ func TestConvertRequest_MixedMessagesAndFunctionOutputs(t *testing.T) {
 		Input: []InputItem{
 			{Type: "message", Message: &MessageInput{Role: "system", Content: MessageContent{Raw: "You are a weather bot.", IsString: true}}},
 			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "Weather in Paris?", IsString: true}}},
-			{Type: "message", Message: &MessageInput{Role: "assistant", Content: MessageContent{Raw: "Let me check that.", IsString: true}}},
+			{
+				Type: "function_call",
+				FunctionCallInput: &FunctionCallInput{
+					ID:        "fc_001",
+					CallID:    "call_xyz",
+					Name:      "get_weather",
+					Arguments: `{"city": "Paris"}`,
+				},
+			},
 			{
 				Type: "function_call_output",
 				FunctionCallOutput: &FunctionCallOutput{
@@ -533,10 +559,13 @@ func TestConvertRequest_MixedMessagesAndFunctionOutputs(t *testing.T) {
 	result, err := ConvertRequest(req)
 	require.NoError(t, err)
 
+	// system → user → assistant(tool_calls) → tool → user
 	require.Len(t, result.Messages, 5)
 	assert.Equal(t, "system", result.Messages[0].Role)
 	assert.Equal(t, "user", result.Messages[1].Role)
 	assert.Equal(t, "assistant", result.Messages[2].Role)
+	require.Len(t, result.Messages[2].ToolCalls, 1)
+	assert.Equal(t, "call_xyz", result.Messages[2].ToolCalls[0].ID)
 	assert.Equal(t, "tool", result.Messages[3].Role)
 	assert.Equal(t, `{"temperature": 18, "condition": "cloudy"}`, result.Messages[3].Content)
 	assert.Equal(t, "user", result.Messages[4].Role)
@@ -823,4 +852,177 @@ func TestConvertResponse_MultipleToolCalls(t *testing.T) {
 	require.NotNil(t, result.Output[2].FunctionCall)
 	assert.Equal(t, "get_time", result.Output[2].FunctionCall.Name)
 	assert.Equal(t, "call_def", result.Output[2].FunctionCall.CallID)
+}
+
+func TestConvertRequest_FiltersNonFunctionTools(t *testing.T) {
+	t.Parallel()
+
+	req := &ResponsesAPIRequest{
+		Model: "gpt-4o",
+		Input: []InputItem{
+			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "run code", IsString: true}}},
+		},
+		Tools: []Tool{
+			{
+				Type: "function",
+				Function: Function{
+					Name:        "shell",
+					Description: "Run a shell command",
+					Parameters:  map[string]any{"type": "object"},
+				},
+			},
+			{
+				Type: "web_search_preview",
+			},
+			{
+				Type: "code_interpreter",
+			},
+			{
+				Type: "file_search",
+			},
+			{
+				Type: "function",
+				Function: Function{
+					Name:        "read_file",
+					Description: "Read a file",
+					Parameters:  map[string]any{"type": "object"},
+				},
+			},
+			{
+				Type: "mcp",
+			},
+		},
+	}
+
+	result, err := ConvertRequest(req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.Len(t, result.Tools, 2, "only function-type tools should pass through")
+	assert.Equal(t, "function", result.Tools[0].Type)
+	assert.Equal(t, "shell", result.Tools[0].Function.Name)
+	assert.Equal(t, "function", result.Tools[1].Type)
+	assert.Equal(t, "read_file", result.Tools[1].Function.Name)
+}
+
+func TestConvertRequest_AllNonFunctionTools_YieldsNil(t *testing.T) {
+	t.Parallel()
+
+	req := &ResponsesAPIRequest{
+		Model: "gpt-4o",
+		Input: []InputItem{
+			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "search web", IsString: true}}},
+		},
+		Tools: []Tool{
+			{Type: "web_search_preview"},
+			{Type: "code_interpreter"},
+			{Type: "file_search"},
+		},
+	}
+
+	result, err := ConvertRequest(req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Nil(t, result.Tools, "all-non-function tools should yield nil tools slice")
+}
+
+func TestConvertRequest_MultipleConsecutiveFunctionCalls(t *testing.T) {
+	t.Parallel()
+
+	req := &ResponsesAPIRequest{
+		Model: "gpt-4o",
+		Input: []InputItem{
+			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "Check weather and time", IsString: true}}},
+			{
+				Type: "function_call",
+				FunctionCallInput: &FunctionCallInput{
+					ID:        "fc_001",
+					CallID:    "call_weather",
+					Name:      "get_weather",
+					Arguments: `{"city": "NYC"}`,
+				},
+			},
+			{
+				Type: "function_call",
+				FunctionCallInput: &FunctionCallInput{
+					ID:        "fc_002",
+					CallID:    "call_time",
+					Name:      "get_time",
+					Arguments: `{"tz": "EST"}`,
+				},
+			},
+			{
+				Type: "function_call_output",
+				FunctionCallOutput: &FunctionCallOutput{
+					CallID: "call_weather",
+					Output: "Sunny 72F",
+				},
+			},
+			{
+				Type: "function_call_output",
+				FunctionCallOutput: &FunctionCallOutput{
+					CallID: "call_time",
+					Output: "3:00 PM EST",
+				},
+			},
+			{Type: "message", Message: &MessageInput{Role: "user", Content: MessageContent{Raw: "Thanks!", IsString: true}}},
+		},
+	}
+
+	result, err := ConvertRequest(req)
+	require.NoError(t, err)
+
+	// user → assistant(2 tool_calls) → tool → tool → user
+	require.Len(t, result.Messages, 5)
+	assert.Equal(t, "user", result.Messages[0].Role)
+
+	// Two function_call items merged into one assistant message
+	assert.Equal(t, "assistant", result.Messages[1].Role)
+	require.Len(t, result.Messages[1].ToolCalls, 2)
+	assert.Equal(t, "call_weather", result.Messages[1].ToolCalls[0].ID)
+	assert.Equal(t, "get_weather", result.Messages[1].ToolCalls[0].Function.Name)
+	assert.Equal(t, "call_time", result.Messages[1].ToolCalls[1].ID)
+	assert.Equal(t, "get_time", result.Messages[1].ToolCalls[1].Function.Name)
+
+	assert.Equal(t, "tool", result.Messages[2].Role)
+	assert.Equal(t, "call_weather", result.Messages[2].ToolCallID)
+	assert.Equal(t, "tool", result.Messages[3].Role)
+	assert.Equal(t, "call_time", result.Messages[3].ToolCallID)
+	assert.Equal(t, "user", result.Messages[4].Role)
+}
+
+func TestConvertRequest_FunctionCallInputJSONParsing(t *testing.T) {
+	t.Parallel()
+
+	jsonStr := `{
+		"model": "gpt-4o",
+		"input": [
+			{"type": "message", "message": {"role": "user", "content": "hi"}},
+			{"type": "function_call", "id": "fc_123", "call_id": "call_abc", "name": "shell", "arguments": "{\"cmd\":\"ls\"}"},
+			{"type": "function_call_output", "function_call_output": {"call_id": "call_abc", "output": "file1.txt"}}
+		]
+	}`
+
+	var req ResponsesAPIRequest
+	err := json.Unmarshal([]byte(jsonStr), &req)
+	require.NoError(t, err)
+
+	require.Len(t, req.Input, 3)
+	assert.Equal(t, "message", req.Input[0].Type)
+	assert.Equal(t, "function_call", req.Input[1].Type)
+	require.NotNil(t, req.Input[1].FunctionCallInput)
+	assert.Equal(t, "fc_123", req.Input[1].FunctionCallInput.ID)
+	assert.Equal(t, "call_abc", req.Input[1].FunctionCallInput.CallID)
+	assert.Equal(t, "shell", req.Input[1].FunctionCallInput.Name)
+	assert.Equal(t, `{"cmd":"ls"}`, req.Input[1].FunctionCallInput.Arguments)
+
+	result, err := ConvertRequest(&req)
+	require.NoError(t, err)
+
+	// user → assistant(tool_calls) → tool
+	require.Len(t, result.Messages, 3)
+	assert.Equal(t, "assistant", result.Messages[1].Role)
+	require.Len(t, result.Messages[1].ToolCalls, 1)
+	assert.Equal(t, "call_abc", result.Messages[1].ToolCalls[0].ID)
+	assert.Equal(t, "shell", result.Messages[1].ToolCalls[0].Function.Name)
 }
