@@ -118,7 +118,7 @@ func NewOpenAIHandler(i do.Injector) (*OpenAIHandlerService, error) {
 	liveRouter := router.NewLiveRouter(routerSvc.GetRouterAsFunc())
 
 	mux := http.NewServeMux()
-	err := proxy.SetupOpenAIRoutes(mux, &proxy.OpenAIRoutesOptions{
+	openaiOpts := &proxy.OpenAIRoutesOptions{
 		ProviderRouter:     liveRouter,
 		ConfigProvider:     cfgSvc,
 		ProviderInfosFunc:  providerInfoSvc.Get,
@@ -127,9 +127,24 @@ func NewOpenAIHandler(i do.Injector) (*OpenAIHandlerService, error) {
 		GetAllProviders:    providerSvc.GetAllProviders,
 		ConcurrencyLimiter: concurrencySvc.Limiter,
 		DebugOptions:       cfg.Logging.DebugOptions,
-	})
+	}
+	err := proxy.SetupOpenAIRoutes(mux, openaiOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup openai handler: %w", err)
+	}
+
+	responsesOpts := &proxy.ResponsesRoutesOptions{
+		ProviderRouter:     liveRouter,
+		ConfigProvider:     cfgSvc,
+		ProviderInfosFunc:  providerInfoSvc.Get,
+		GetProviderPools:   poolMapSvc.GetPools,
+		GetProviderKeys:    poolMapSvc.GetKeys,
+		GetAllProviders:    providerSvc.GetAllProviders,
+		ConcurrencyLimiter: concurrencySvc.Limiter,
+		DebugOptions:       cfg.Logging.DebugOptions,
+	}
+	if err := proxy.SetupResponsesRoutes(mux, responsesOpts); err != nil {
+		return nil, fmt.Errorf("failed to setup responses handler: %w", err)
 	}
 
 	return &OpenAIHandlerService{Handler: mux}, nil

@@ -53,7 +53,7 @@ func newResponsesHandler(t *testing.T, provs ...providers.Provider) *proxy.Respo
 
 func newResponsesRequest(t *testing.T, body string) *http.Request {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
@@ -148,7 +148,7 @@ func TestResponsesIntegration_NonStreaming_ToolCalling(t *testing.T) {
 	}
 	reqJSON, err := json.Marshal(reqBodyMap)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBuffer(reqJSON))
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBuffer(reqJSON))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

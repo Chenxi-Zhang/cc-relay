@@ -32,7 +32,7 @@ func TestResponsesHandler_MethodNotAllowed(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -46,7 +46,7 @@ func TestResponsesHandler_InvalidJSON(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString("not json"))
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBufferString("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -66,7 +66,7 @@ func TestResponsesHandler_MissingModel(t *testing.T) {
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBuffer(jsonBody))
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -87,7 +87,7 @@ func TestResponsesHandler_NoProviders(t *testing.T) {
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBuffer(jsonBody))
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)

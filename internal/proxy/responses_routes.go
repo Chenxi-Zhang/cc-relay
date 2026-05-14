@@ -27,10 +27,10 @@ type ResponsesRoutesOptions struct {
 const responsesRoutesRequiredMsg = "responses routes options are required"
 
 // SetupResponsesRoutes registers Responses API routes on the given mux.
-// Routes:
-//   - POST /v1/responses — Responses API endpoint
-//   - GET /v1/responses/models — Responses API model listing
-//   - GET /v1/responses/providers — Responses API provider status
+// Routes (mounted under the OpenAI mux):
+//   - POST /openai/v1/responses — Responses API endpoint (Codex-compatible)
+//   - GET /openai/v1/responses/models — Responses API model listing
+//   - GET /openai/v1/responses/providers — Responses API provider status
 //
 // No auth middleware is applied (local deployment per user decision).
 // Middleware order (outermost first):
@@ -44,21 +44,15 @@ func SetupResponsesRoutes(mux *http.ServeMux, opts *ResponsesRoutesOptions) erro
 		return errors.New(responsesRoutesRequiredMsg)
 	}
 
-	// Only register routes if Responses API is enabled
-	cfg := opts.ConfigProvider.Get()
-	if cfg == nil || !cfg.Responses.EnableResponsesAPI {
-		return nil
-	}
-
 	chatHandler, err := buildResponsesHandler(opts)
 	if err != nil {
 		return err
 	}
-	mux.Handle("POST /v1/responses", chatHandler)
+	mux.Handle("POST /openai/v1/responses", chatHandler)
 
 	// Reuse existing OpenAI models endpoint for Responses API
 	providersGetter := responsesLiveProvidersGetter(opts)
-	mux.Handle("GET /v1/responses/models", NewOpenAIModelsHandlerWithProviderFunc(providersGetter))
+	mux.Handle("GET /openai/v1/responses/models", NewOpenAIModelsHandlerWithProviderFunc(providersGetter))
 
 	poolsGetter := func() map[string]*keypool.KeyPool {
 		if opts.GetProviderPools != nil {
@@ -66,7 +60,7 @@ func SetupResponsesRoutes(mux *http.ServeMux, opts *ResponsesRoutesOptions) erro
 		}
 		return opts.ProviderPools
 	}
-	mux.Handle("GET /v1/responses/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
+	mux.Handle("GET /openai/v1/responses/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
 
 	return nil
 }
@@ -104,7 +98,11 @@ func buildResponsesHandler(opts *ResponsesRoutesOptions) (http.Handler, error) {
 
 	// Logging with live debug options.
 	h = LoggingMiddlewareWithProvider(func() config.DebugOptions {
-		return opts.DebugOptions
+		cfg := opts.ConfigProvider.Get()
+		if cfg == nil {
+			return config.DebugOptions{}
+		}
+		return cfg.Logging.DebugOptions
 	})(h)
 
 	// Request ID middleware.
