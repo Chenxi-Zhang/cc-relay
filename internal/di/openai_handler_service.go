@@ -32,36 +32,8 @@ func (s *OpenAIProviderInfoService) Get() []router.ProviderInfo {
 
 // RebuildFrom rebuilds the OpenAI provider info slice from the given config.
 func (s *OpenAIProviderInfoService) RebuildFrom(cfg *config.Config) {
-	providerMap := s.providerSvc.GetProviders()
-
-	var providerInfos []router.ProviderInfo
-	for idx := range cfg.OpenAIProviders {
-		providerCfg := &cfg.OpenAIProviders[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		prov, ok := providerMap[providerCfg.Name]
-		if !ok {
-			continue
-		}
-
-		var weight, priority int
-		if len(providerCfg.Keys) > 0 {
-			weight = providerCfg.Keys[0].Weight
-			priority = providerCfg.Keys[0].Priority
-		}
-
-		providerName := providerCfg.Name
-		providerInfos = append(providerInfos, router.ProviderInfo{
-			Provider:  prov,
-			Weight:    weight,
-			Priority:  priority,
-			IsHealthy: s.trackerSvc.Tracker.IsHealthyFunc(providerName),
-		})
-	}
-
-	s.infos.Store(&providerInfos)
+	infos := rebuildProviderInfos(cfg.OpenAIProviders, s.providerSvc.GetProviders(), s.trackerSvc)
+	s.infos.Store(&infos)
 }
 
 // StartWatching registers a callback to rebuild OpenAI provider info on config reload.
@@ -133,7 +105,7 @@ func NewOpenAIHandler(i do.Injector) (*OpenAIHandlerService, error) {
 		return nil, fmt.Errorf("failed to setup openai handler: %w", err)
 	}
 
-	responsesOpts := &proxy.ResponsesRoutesOptions{
+	responsesOpts := &proxy.OpenAIRoutesOptions{
 		ProviderRouter:     liveRouter,
 		ConfigProvider:     cfgSvc,
 		ProviderInfosFunc:  providerInfoSvc.Get,

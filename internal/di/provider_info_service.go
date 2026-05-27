@@ -7,6 +7,7 @@ import (
 	"github.com/samber/do/v2"
 
 	"github.com/omarluq/cc-relay/internal/config"
+	"github.com/omarluq/cc-relay/internal/providers"
 	"github.com/omarluq/cc-relay/internal/router"
 )
 
@@ -46,36 +47,9 @@ func (s *ProviderInfoService) Rebuild() {
 }
 
 // RebuildFrom rebuilds the provider info slice from the given config.
-// This is called from reload callbacks to ensure we use the fresh config
-// rather than racing with the atomic config swap.
-// Uses the live provider map to pick up newly enabled providers.
 func (s *ProviderInfoService) RebuildFrom(cfg *config.Config) {
-	var providerInfos []router.ProviderInfo
-
-	// Use live provider map to pick up newly enabled providers
-	providerMap := s.providerSvc.GetProviders()
-
-	for idx := range cfg.Providers {
-		providerCfg := &cfg.Providers[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		prov, ok := providerMap[providerCfg.Name]
-		if !ok {
-			continue
-		}
-
-		providerName := providerCfg.Name
-		providerInfos = append(providerInfos, router.ProviderInfo{
-			Provider:  prov,
-			Weight:    providerCfg.GetEffectiveWeight(),
-			Priority:  providerCfg.GetEffectivePriority(),
-			IsHealthy: s.trackerSvc.Tracker.IsHealthyFunc(providerName),
-		})
-	}
-
-	s.infos.Store(&providerInfos)
+	infos := rebuildProviderInfos(cfg.Providers, s.providerSvc.GetProviders(), s.trackerSvc)
+	s.infos.Store(&infos)
 }
 
 // StartWatching begins watching config changes for provider info updates.
@@ -117,4 +91,33 @@ func NewProviderInfo(i do.Injector) (*ProviderInfoService, error) {
 	svc.StartWatching()
 
 	return svc, nil
+}
+
+type providerLookup interface {
+	GetProviders() map[string]providers.Provider
+}
+
+func rebuildProviderInfos(
+	providerCfgs []config.ProviderConfig,
+	providerMap map[string]providers.Provider,
+	trackerSvc *HealthTrackerService,
+) []router.ProviderInfo {
+	var infos []router.ProviderInfo
+	for idx := range providerCfgs {
+		cfg := &providerCfgs[idx]
+		if !cfg.Enabled {
+			continue
+		}
+		prov, ok := providerMap[cfg.Name]
+		if !ok {
+			continue
+		}
+		infos = append(infos, router.ProviderInfo{
+			Provider:  prov,
+			Weight:    cfg.GetEffectiveWeight(),
+			Priority:  cfg.GetEffectivePriority(),
+			IsHealthy: trackerSvc.Tracker.IsHealthyFunc(cfg.Name),
+		})
+	}
+	return infos
 }

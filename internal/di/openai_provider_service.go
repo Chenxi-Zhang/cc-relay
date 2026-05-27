@@ -2,7 +2,6 @@ package di
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
@@ -52,56 +51,21 @@ func (s *OpenAIProviderMapService) GetPrimaryKey() string {
 // RebuildFrom rebuilds the OpenAI provider map from the given config.
 func (s *OpenAIProviderMapService) RebuildFrom(cfg *config.Config) error {
 	ctx := context.Background()
+	result := rebuildProviderMap(ctx, cfg.OpenAIProviders)
 
-	providerMap := make(map[string]providers.Provider)
-	var allProviders []providers.Provider
-	var primaryKey string
-
-	for idx := range cfg.OpenAIProviders {
-		providerCfg := &cfg.OpenAIProviders[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		prov, err := createProvider(ctx, providerCfg)
-		if errors.Is(err, ErrUnknownProviderType) {
-			log.Warn().
-				Str("provider", providerCfg.Name).
-				Str("type", providerCfg.Type).
-				Msg("skipping unknown openai provider type on reload")
-			continue
-		}
-		if err != nil {
-			log.Error().Err(err).Str("provider", providerCfg.Name).Msg("failed to create openai provider on reload")
-			continue
-		}
-
-		providerMap[providerCfg.Name] = prov
-		allProviders = append(allProviders, prov)
-
-		if primaryKey == "" {
-			for _, keyCfg := range providerCfg.Keys {
-				if keyCfg.IsEnabled() {
-					primaryKey = keyCfg.Key
-					break
-				}
-			}
-		}
-	}
-
-	if len(providerMap) == 0 {
+	if len(result.ProviderMap) == 0 {
 		log.Warn().Msg("no enabled openai providers in new config, keeping current providers")
 		return nil
 	}
 
 	s.data.Store(&providerMapData{
-		Providers:    providerMap,
-		AllProviders: allProviders,
-		PrimaryKey:   primaryKey,
+		Providers:    result.ProviderMap,
+		AllProviders: result.AllProviders,
+		PrimaryKey:   result.PrimaryKey,
 	})
-	s.Providers = providerMap
-	s.AllProviders = allProviders
-	s.PrimaryKey = primaryKey
+	s.Providers = result.ProviderMap
+	s.AllProviders = result.AllProviders
+	s.PrimaryKey = result.PrimaryKey
 
 	return nil
 }
@@ -126,51 +90,25 @@ func NewOpenAIProviderMap(i do.Injector) (*OpenAIProviderMapService, error) {
 	cfgSvc := do.MustInvoke[*ConfigService](i)
 	cfg := cfgSvc.Config
 
-	svc := &OpenAIProviderMapService{
-		data:         atomic.Pointer[providerMapData]{},
-		cfgSvc:       cfgSvc,
-		Providers:    make(map[string]providers.Provider),
-		AllProviders: nil,
-		PrimaryKey:   "",
-	}
-
 	ctx := context.Background()
+	result := rebuildProviderMap(ctx, cfg.OpenAIProviders)
 
-	for idx := range cfg.OpenAIProviders {
-		providerCfg := &cfg.OpenAIProviders[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		prov, err := createProvider(ctx, providerCfg)
-		if errors.Is(err, ErrUnknownProviderType) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		svc.Providers[providerCfg.Name] = prov
-		svc.AllProviders = append(svc.AllProviders, prov)
-
-		if svc.PrimaryKey == "" {
-			for _, keyCfg := range providerCfg.Keys {
-				if keyCfg.IsEnabled() {
-					svc.PrimaryKey = keyCfg.Key
-					break
-				}
-			}
-		}
-	}
-
-	if len(svc.Providers) == 0 {
+	if len(result.ProviderMap) == 0 {
 		log.Info().Msg("no openai providers configured, openai routes will be unavailable")
 	}
 
+	svc := &OpenAIProviderMapService{
+		data:         atomic.Pointer[providerMapData]{},
+		cfgSvc:       cfgSvc,
+		Providers:    result.ProviderMap,
+		AllProviders: result.AllProviders,
+		PrimaryKey:   result.PrimaryKey,
+	}
+
 	svc.data.Store(&providerMapData{
-		Providers:    svc.Providers,
-		AllProviders: svc.AllProviders,
-		PrimaryKey:   svc.PrimaryKey,
+		Providers:    result.ProviderMap,
+		AllProviders: result.AllProviders,
+		PrimaryKey:   result.PrimaryKey,
 	})
 
 	svc.StartWatching()

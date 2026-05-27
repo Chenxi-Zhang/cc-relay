@@ -20,15 +20,6 @@ import (
 	"github.com/omarluq/cc-relay/internal/router"
 )
 
-type ResponsesHandlerOptions struct {
-	Router           router.ProviderRouter
-	Providers        ProviderInfoFunc
-	GetProviderPools KeyPoolsFunc
-	GetProviderKeys  KeysFunc
-	DebugOptions     config.DebugOptions
-	ConfigProvider   config.RuntimeConfigGetter
-}
-
 type ResponsesHandler struct {
 	router           router.ProviderRouter
 	providers        ProviderInfoFunc
@@ -40,7 +31,7 @@ type ResponsesHandler struct {
 	httpClient       *http.Client
 }
 
-func NewResponsesHandler(opts *ResponsesHandlerOptions) (*ResponsesHandler, error) {
+func NewResponsesHandler(opts *OpenAIHandlerOptions) (*ResponsesHandler, error) {
 	if opts == nil {
 		return nil, errors.New("responses handler options are required")
 	}

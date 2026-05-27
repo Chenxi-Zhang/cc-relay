@@ -35,7 +35,7 @@ func newResponsesHandler(t *testing.T, provs ...providers.Provider) *proxy.Respo
 	for i, p := range provs {
 		infos[i] = proxy.TestProviderInfo(p)
 	}
-	h, err := proxy.NewResponsesHandler(&proxy.ResponsesHandlerOptions{
+	h, err := proxy.NewResponsesHandler(&proxy.OpenAIHandlerOptions{
 		Router:    router.NewFailoverRouter(0),
 		Providers: func() []router.ProviderInfo { return infos },
 		GetProviderKeys: func() map[string]string {
@@ -252,7 +252,7 @@ func TestResponsesIntegration_UpstreamError(t *testing.T) {
 }
 
 func TestResponsesIntegration_NoProviders(t *testing.T) {
-	handler, err := proxy.NewResponsesHandler(&proxy.ResponsesHandlerOptions{
+	handler, err := proxy.NewResponsesHandler(&proxy.OpenAIHandlerOptions{
 		Router:    router.NewFailoverRouter(0),
 		Providers: func() []router.ProviderInfo { return nil },
 		DebugOptions: proxy.TestDebugOptions(),
@@ -380,7 +380,7 @@ func TestResponsesIntegration_FailoverBetweenProviders(t *testing.T) {
 		proxy.TestProviderInfoWithHealth(provB, func() bool { return true }),
 	}
 
-	handler, err := proxy.NewResponsesHandler(&proxy.ResponsesHandlerOptions{
+	handler, err := proxy.NewResponsesHandler(&proxy.OpenAIHandlerOptions{
 		Router:    router.NewFailoverRouter(0),
 		Providers: func() []router.ProviderInfo { return infos },
 		GetProviderKeys: func() map[string]string {

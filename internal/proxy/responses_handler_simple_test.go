@@ -26,7 +26,7 @@ func (t *testResponsesRouter) Select(_ context.Context, _ []router.ProviderInfo)
 func (t *testResponsesRouter) Name() string { return "test" }
 
 func TestResponsesHandler_MethodNotAllowed(t *testing.T) {
-	handler, err := NewResponsesHandler(&ResponsesHandlerOptions{
+	handler, err := NewResponsesHandler(&OpenAIHandlerOptions{
 		Router:    &testResponsesRouter{},
 		Providers: func() []router.ProviderInfo { return nil },
 	})
@@ -40,7 +40,7 @@ func TestResponsesHandler_MethodNotAllowed(t *testing.T) {
 }
 
 func TestResponsesHandler_InvalidJSON(t *testing.T) {
-	handler, err := NewResponsesHandler(&ResponsesHandlerOptions{
+	handler, err := NewResponsesHandler(&OpenAIHandlerOptions{
 		Router:    &testResponsesRouter{},
 		Providers: func() []router.ProviderInfo { return nil },
 	})
@@ -55,7 +55,7 @@ func TestResponsesHandler_InvalidJSON(t *testing.T) {
 }
 
 func TestResponsesHandler_MissingModel(t *testing.T) {
-	handler, err := NewResponsesHandler(&ResponsesHandlerOptions{
+	handler, err := NewResponsesHandler(&OpenAIHandlerOptions{
 		Router:    &testResponsesRouter{},
 		Providers: func() []router.ProviderInfo { return nil },
 	})
@@ -75,7 +75,7 @@ func TestResponsesHandler_MissingModel(t *testing.T) {
 }
 
 func TestResponsesHandler_NoProviders(t *testing.T) {
-	handler, err := NewResponsesHandler(&ResponsesHandlerOptions{
+	handler, err := NewResponsesHandler(&OpenAIHandlerOptions{
 		Router:    &testResponsesRouter{},
 		Providers: func() []router.ProviderInfo { return nil },
 	})

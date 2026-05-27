@@ -56,6 +56,42 @@ func buildPoolConfig(providerCfg *config.ProviderConfig) keypool.PoolConfig {
 	return poolCfg
 }
 
+func rebuildKeyPoolMap(providerCfgs []config.ProviderConfig) (pools map[string]*keypool.KeyPool, keys map[string]string, rebuildErr error) {
+	pools = make(map[string]*keypool.KeyPool)
+	keys = make(map[string]string)
+
+	for idx := range providerCfgs {
+		cfg := &providerCfgs[idx]
+		if !cfg.Enabled {
+			continue
+		}
+
+		for _, keyCfg := range cfg.Keys {
+			if keyCfg.IsEnabled() {
+				keys[cfg.Name] = keyCfg.Key
+				break
+			}
+		}
+
+		if !cfg.IsPoolingEnabled() {
+			continue
+		}
+
+		poolCfg := buildPoolConfig(cfg)
+
+		pool, err := keypool.NewKeyPool(cfg.Name, poolCfg)
+		if err != nil {
+			log.Error().Err(err).Str("provider", cfg.Name).Msg("failed to create key pool on reload")
+			rebuildErr = err
+			continue
+		}
+
+		pools[cfg.Name] = pool
+	}
+
+	return pools, keys, rebuildErr
+}
+
 func watchConfig(
 	cfgSvc *ConfigService,
 	rebuild func(*config.Config) error,
@@ -183,48 +219,11 @@ func (s *KeyPoolMapService) GetKeys() map[string]string {
 }
 
 // RebuildFrom rebuilds key pools from the given config.
-// Called from reload callbacks to create pools for newly enabled providers.
 func (s *KeyPoolMapService) RebuildFrom(cfg *config.Config) error {
-	pools := make(map[string]*keypool.KeyPool)
-	keys := make(map[string]string)
-	var rebuildErr error
-
-	for idx := range cfg.Providers {
-		providerCfg := &cfg.Providers[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		// Store fallback key (first enabled key)
-		for _, keyCfg := range providerCfg.Keys {
-			if keyCfg.IsEnabled() {
-				keys[providerCfg.Name] = keyCfg.Key
-				break
-			}
-		}
-
-		// Skip pool creation if pooling not enabled for this provider
-		if !providerCfg.IsPoolingEnabled() {
-			continue
-		}
-
-		poolCfg := buildPoolConfig(providerCfg)
-
-		pool, err := keypool.NewKeyPool(providerCfg.Name, poolCfg)
-		if err != nil {
-			log.Error().Err(err).Str("provider", providerCfg.Name).Msg("failed to create key pool on reload")
-			rebuildErr = err
-			continue // Log and skip, don't fail the entire reload
-		}
-
-		pools[providerCfg.Name] = pool
-	}
-
+	pools, keys, rebuildErr := rebuildKeyPoolMap(cfg.Providers)
 	s.data.Store(&keyPoolMapData{Pools: pools, Keys: keys})
-	// Also update legacy fields for backward compatibility
 	s.Pools = pools
 	s.Keys = keys
-
 	return rebuildErr
 }
 

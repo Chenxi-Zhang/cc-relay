@@ -81,66 +81,25 @@ func (s *ProviderMapService) GetProvider(name string) (providers.Provider, bool)
 }
 
 // RebuildFrom rebuilds the provider map from the given config.
-// Called from reload callbacks to create providers for newly enabled ones.
-// Reuses existing providers when possible to preserve state.
 func (s *ProviderMapService) RebuildFrom(cfg *config.Config) error {
 	ctx := context.Background()
+	result := rebuildProviderMap(ctx, cfg.Providers)
 
-	providerMap := make(map[string]providers.Provider)
-	var allProviders []providers.Provider
-	var primaryProvider providers.Provider
-	var primaryKey string
-
-	for idx := range cfg.Providers {
-		providerCfg := &cfg.Providers[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		prov, err := createProvider(ctx, providerCfg)
-		if errors.Is(err, ErrUnknownProviderType) {
-			log.Warn().
-				Str("provider", providerCfg.Name).
-				Str("type", providerCfg.Type).
-				Msg("skipping unknown provider type on reload")
-			continue // Skip unknown provider types
-		}
-		if err != nil {
-			log.Error().Err(err).Str("provider", providerCfg.Name).Msg("failed to create provider on reload")
-			continue // Log and skip, don't fail the entire reload
-		}
-
-		providerMap[providerCfg.Name] = prov
-		allProviders = append(allProviders, prov)
-
-		if primaryProvider == nil {
-			primaryProvider = prov
-			for _, keyCfg := range providerCfg.Keys {
-				if keyCfg.IsEnabled() {
-					primaryKey = keyCfg.Key
-					break
-				}
-			}
-		}
-	}
-
-	if primaryProvider == nil {
-		// Keep using current providers if no enabled providers in new config
+	if result.PrimaryProvider == nil {
 		log.Warn().Msg("no enabled providers in new config, keeping current providers")
 		return nil
 	}
 
 	s.data.Store(&providerMapData{
-		PrimaryProvider: primaryProvider,
-		Providers:       providerMap,
-		PrimaryKey:      primaryKey,
-		AllProviders:    allProviders,
+		PrimaryProvider: result.PrimaryProvider,
+		Providers:       result.ProviderMap,
+		PrimaryKey:      result.PrimaryKey,
+		AllProviders:    result.AllProviders,
 	})
-	// Also update legacy fields for backward compatibility
-	s.PrimaryProvider = primaryProvider
-	s.Providers = providerMap
-	s.PrimaryKey = primaryKey
-	s.AllProviders = allProviders
+	s.PrimaryProvider = result.PrimaryProvider
+	s.Providers = result.ProviderMap
+	s.PrimaryKey = result.PrimaryKey
+	s.AllProviders = result.AllProviders
 
 	return nil
 }
@@ -160,47 +119,41 @@ func (s *ProviderMapService) StartWatching() {
 	})
 }
 
-// NewProviderMap creates the map of enabled providers with hot-reload support.
-// Supports hot-reload: call StartWatching() is invoked automatically.
-func NewProviderMap(i do.Injector) (*ProviderMapService, error) {
-	cfgSvc := do.MustInvoke[*ConfigService](i)
-	cfg := cfgSvc.Config
+type providerMapResult struct {
+	ProviderMap     map[string]providers.Provider
+	AllProviders    []providers.Provider
+	PrimaryProvider providers.Provider
+	PrimaryKey      string
+}
 
-	svc := &ProviderMapService{
-		data:            atomic.Pointer[providerMapData]{},
-		cfgSvc:          cfgSvc,
-		Providers:       make(map[string]providers.Provider),
-		PrimaryProvider: nil,
-		PrimaryKey:      "",
-		AllProviders:    nil,
-	}
-
+func rebuildProviderMap(ctx context.Context, providerCfgs []config.ProviderConfig) providerMapResult {
+	providerMap := make(map[string]providers.Provider)
+	var allProviders []providers.Provider
 	var primaryProvider providers.Provider
 	var primaryKey string
 
-	ctx := context.Background()
-
-	for idx := range cfg.Providers {
-		providerCfg := &cfg.Providers[idx]
-		if !providerCfg.Enabled {
+	for idx := range providerCfgs {
+		cfg := &providerCfgs[idx]
+		if !cfg.Enabled {
 			continue
 		}
 
-		prov, err := createProvider(ctx, providerCfg)
+		prov, err := createProvider(ctx, cfg)
 		if errors.Is(err, ErrUnknownProviderType) {
-			continue // Skip unknown provider types
+			log.Warn().Str("provider", cfg.Name).Str("type", cfg.Type).Msg("skipping unknown provider type on reload")
+			continue
 		}
 		if err != nil {
-			return nil, err
+			log.Error().Err(err).Str("provider", cfg.Name).Msg("failed to create provider on reload")
+			continue
 		}
 
-		svc.Providers[providerCfg.Name] = prov
-		svc.AllProviders = append(svc.AllProviders, prov)
+		providerMap[cfg.Name] = prov
+		allProviders = append(allProviders, prov)
 
-		// First enabled provider becomes the primary
 		if primaryProvider == nil {
 			primaryProvider = prov
-			for _, keyCfg := range providerCfg.Keys {
+			for _, keyCfg := range cfg.Keys {
 				if keyCfg.IsEnabled() {
 					primaryKey = keyCfg.Key
 					break
@@ -209,22 +162,42 @@ func NewProviderMap(i do.Injector) (*ProviderMapService, error) {
 		}
 	}
 
-	if primaryProvider == nil {
+	return providerMapResult{
+		ProviderMap:     providerMap,
+		AllProviders:    allProviders,
+		PrimaryProvider: primaryProvider,
+		PrimaryKey:      primaryKey,
+	}
+}
+
+// NewProviderMap creates the map of enabled providers with hot-reload support.
+func NewProviderMap(i do.Injector) (*ProviderMapService, error) {
+	cfgSvc := do.MustInvoke[*ConfigService](i)
+	cfg := cfgSvc.Config
+
+	ctx := context.Background()
+	result := rebuildProviderMap(ctx, cfg.Providers)
+
+	if result.PrimaryProvider == nil {
 		return nil, fmt.Errorf("no enabled provider found (supported: %s)", supportedProviderTypes)
 	}
 
-	svc.PrimaryProvider = primaryProvider
-	svc.PrimaryKey = primaryKey
+	svc := &ProviderMapService{
+		data:            atomic.Pointer[providerMapData]{},
+		cfgSvc:          cfgSvc,
+		Providers:       result.ProviderMap,
+		PrimaryProvider: result.PrimaryProvider,
+		PrimaryKey:      result.PrimaryKey,
+		AllProviders:    result.AllProviders,
+	}
 
-	// Store initial data in atomic pointer
 	svc.data.Store(&providerMapData{
-		PrimaryProvider: primaryProvider,
-		Providers:       svc.Providers,
-		PrimaryKey:      primaryKey,
-		AllProviders:    svc.AllProviders,
+		PrimaryProvider: result.PrimaryProvider,
+		Providers:       result.ProviderMap,
+		PrimaryKey:      result.PrimaryKey,
+		AllProviders:    result.AllProviders,
 	})
 
-	// Start watching for config changes
 	svc.StartWatching()
 
 	return svc, nil

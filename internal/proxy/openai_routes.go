@@ -79,9 +79,12 @@ func buildOpenAIChatHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
 		return nil, err
 	}
 
+	return wireOpenAICompatMiddleware(handler, opts), nil
+}
+
+func wireOpenAICompatMiddleware(handler http.Handler, opts *OpenAIRoutesOptions) http.Handler {
 	var h http.Handler = handler
 
-	// Apply max_body_bytes limit (hot-reloadable).
 	h = MaxBodyBytesMiddleware(func() int64 {
 		cfg := opts.ConfigProvider.Get()
 		if cfg == nil {
@@ -90,12 +93,10 @@ func buildOpenAIChatHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
 		return cfg.Server.MaxBodyBytes
 	})(h)
 
-	// Apply concurrency limit if limiter provided.
 	if opts.ConcurrencyLimiter != nil {
 		h = ConcurrencyMiddleware(opts.ConcurrencyLimiter)(h)
 	}
 
-	// Logging with live debug options.
 	h = LoggingMiddlewareWithProvider(func() config.DebugOptions {
 		cfg := opts.ConfigProvider.Get()
 		if cfg == nil {
@@ -104,10 +105,9 @@ func buildOpenAIChatHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
 		return cfg.Logging.DebugOptions
 	})(h)
 
-	// Request ID (outermost).
 	h = RequestIDMiddleware()(h)
 
-	return h, nil
+	return h
 }
 
 // openAILiveProvidersGetter returns a function that resolves the current OpenAI provider list.

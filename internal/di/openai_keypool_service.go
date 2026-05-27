@@ -3,7 +3,6 @@ package di
 import (
 	"sync/atomic"
 
-	"github.com/rs/zerolog/log"
 	"github.com/samber/do/v2"
 
 	"github.com/omarluq/cc-relay/internal/config"
@@ -39,41 +38,10 @@ func (s *OpenAIKeyPoolMapService) GetKeys() map[string]string {
 
 // RebuildFrom rebuilds key pools from OpenAI providers in the given config.
 func (s *OpenAIKeyPoolMapService) RebuildFrom(cfg *config.Config) error {
-	pools := make(map[string]*keypool.KeyPool)
-	keys := make(map[string]string)
-
-	for idx := range cfg.OpenAIProviders {
-		providerCfg := &cfg.OpenAIProviders[idx]
-		if !providerCfg.Enabled {
-			continue
-		}
-
-		for _, keyCfg := range providerCfg.Keys {
-			if keyCfg.IsEnabled() {
-				keys[providerCfg.Name] = keyCfg.Key
-				break
-			}
-		}
-
-		if !providerCfg.IsPoolingEnabled() {
-			continue
-		}
-
-		poolCfg := buildPoolConfig(providerCfg)
-
-		pool, err := keypool.NewKeyPool(providerCfg.Name, poolCfg)
-		if err != nil {
-			log.Error().Err(err).Str("provider", providerCfg.Name).Msg("failed to create openai key pool on reload")
-			continue
-		}
-
-		pools[providerCfg.Name] = pool
-	}
-
+	pools, keys, _ := rebuildKeyPoolMap(cfg.OpenAIProviders)
 	s.data.Store(&keyPoolMapData{Pools: pools, Keys: keys})
 	s.Pools = pools
 	s.Keys = keys
-
 	return nil
 }
 
