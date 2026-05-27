@@ -349,7 +349,31 @@ type ProviderConfig struct {
 	AuthMethod         string            `yaml:"auth_method" toml:"auth_method"` // "x-api-key" (default) or "bearer"
 	// CooldownStrategy selects the 429 cooldown resolver for this provider.
 	// Options: "zai", "openai", "generic", "" (auto-detect from type).
-	CooldownStrategy   string            `yaml:"cooldown_strategy" toml:"cooldown_strategy"`
+	CooldownStrategy string `yaml:"cooldown_strategy" toml:"cooldown_strategy"`
+
+	// Priority determines the provider's failover tier for provider-level routing.
+	// Higher value = higher priority. Providers with the same priority form a tier.
+	// The router tries the highest-priority tier first and fails over to lower tiers.
+	// Default: 0 (lowest priority).
+	Priority int `yaml:"priority" toml:"priority"`
+
+	// Weight controls proportional selection within the same priority tier.
+	// Higher weight = more traffic. Only meaningful when multiple providers
+	// share the same priority. Default: 1 (when unset or <= 0).
+	Weight int `yaml:"weight" toml:"weight"`
+}
+
+// GetEffectivePriority returns the provider priority, defaulting to 0.
+func (p *ProviderConfig) GetEffectivePriority() int {
+	return p.Priority
+}
+
+// GetEffectiveWeight returns the provider weight, defaulting to 1.
+func (p *ProviderConfig) GetEffectiveWeight() int {
+	if p.Weight <= 0 {
+		return 1
+	}
+	return p.Weight
 }
 
 // PoolingConfig defines key pool behavior for a provider.

@@ -46,6 +46,11 @@ func TestStrategyConstants(t *testing.T) {
 			constant: router.StrategyWeightedFailover,
 			expected: "weighted_failover",
 		},
+		{
+			name:     "priority weighted failover",
+			constant: router.StrategyPriorityWeightedFailover,
+			expected: "priority_weighted_failover",
+		},
 	}
 
 	for _, testCase := range tests {

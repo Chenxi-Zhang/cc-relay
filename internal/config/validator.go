@@ -23,7 +23,8 @@ var validRoutingStrategies = map[string]bool{
 	"shuffle":              true,
 	"model_based":          true,
 	"least_loaded":         true,
-	"weighted_failover":    true,
+	"weighted_failover":              true,
+	"priority_weighted_failover":     true,
 }
 
 // Valid keypool strategies.
@@ -199,9 +200,34 @@ func validateProvider(provider *ProviderConfig, index int, seenNames map[string]
 		errs.Addf("%s is invalid (got %q, valid: generic, openai, zai)",
 			prefix("cooldown_strategy"), provider.CooldownStrategy)
 	}
+
+	if provider.Priority < 0 {
+		errs.Addf("%s must be >= 0 (got %d)", prefix("priority"), provider.Priority)
+	}
+
+	if provider.Weight < 0 {
+		errs.Addf("%s must be >= 0 (got %d)", prefix("weight"), provider.Weight)
+	}
 }
 
-// validateCloudProviderConfig validates cloud provider-specific fields.
+// validateRouting validates the routing configuration section.
+func validateRouting(cfg *Config, errs *ValidationError) {
+	strategy := cfg.Routing.Strategy
+	if !validRoutingStrategies[strategy] {
+		errs.Addf("routing.strategy is invalid (got %q, valid: failover, round_robin, weighted_round_robin, shuffle, model_based, least_loaded, weighted_failover, priority_weighted_failover)",
+			strategy)
+	}
+
+	if strategy == "model_based" && len(cfg.Routing.ModelMapping) == 0 {
+		errs.Add("routing.model_mapping is required when strategy is model_based")
+	}
+
+	if cfg.Routing.FailoverTimeout < 0 {
+		errs.Add("routing.failover_timeout must be >= 0")
+	}
+}
+
+// validateCloudProviderConfig validates cloud-specific required fields for a provider.
 func validateCloudProviderConfig(provider *ProviderConfig, prefix func(string) string, errs *ValidationError) {
 	switch provider.Type {
 	case ProviderBedrock:
@@ -223,7 +249,7 @@ func validateCloudProviderConfig(provider *ProviderConfig, prefix func(string) s
 }
 
 // validateProviderKey validates a single API key configuration.
-func validateProviderKey(keyCfg *KeyConfig, providerName string, index int, errs *ValidationError) {
+func validateProviderKey(key *KeyConfig, providerName string, index int, errs *ValidationError) {
 	prefix := func(field string) string {
 		if providerName != "" {
 			return fmt.Sprintf("provider[%s].keys[%d].%s", providerName, index, field)
@@ -231,57 +257,11 @@ func validateProviderKey(keyCfg *KeyConfig, providerName string, index int, errs
 		return fmt.Sprintf("keys[%d].%s", index, field)
 	}
 
-	// Key is required (will be expanded from env var later)
-	if keyCfg.Key == "" {
+	if key.Key == "" {
 		errs.Addf("%s is required", prefix("key"))
 	}
-
-	// Priority must be 0-2
-	if keyCfg.Priority < 0 || keyCfg.Priority > 2 {
-		errs.Addf("%s must be 0-2 (got %d)", prefix("priority"), keyCfg.Priority)
-	}
-
-	// Weight must be non-negative
-	if keyCfg.Weight < 0 {
-		errs.Addf("%s must be >= 0 (got %d)", prefix("weight"), keyCfg.Weight)
-	}
-
-	// Rate limits must be non-negative
-	if keyCfg.RPMLimit < 0 {
-		errs.Addf("%s must be >= 0 (got %d)", prefix("rpm_limit"), keyCfg.RPMLimit)
-	}
-	if keyCfg.TPMLimit < 0 {
-		errs.Addf("%s must be >= 0 (got %d)", prefix("tpm_limit"), keyCfg.TPMLimit)
-	}
-	if keyCfg.ITPMLimit < 0 {
-		errs.Addf("%s must be >= 0 (got %d)", prefix("itpm_limit"), keyCfg.ITPMLimit)
-	}
-	if keyCfg.OTPMLimit < 0 {
-		errs.Addf("%s must be >= 0 (got %d)", prefix("otpm_limit"), keyCfg.OTPMLimit)
-	}
 }
 
-// validateRouting validates the routing configuration section.
-func validateRouting(cfg *Config, errs *ValidationError) {
-	// Strategy must be valid if set
-	if cfg.Routing.Strategy != "" && !validRoutingStrategies[cfg.Routing.Strategy] {
-		errs.Addf("routing.strategy is invalid (got %q, valid: failover, round_robin, "+
-			"weighted_round_robin, shuffle, model_based, least_loaded, weighted_failover)",
-			cfg.Routing.Strategy)
-	}
-
-	// FailoverTimeout must be non-negative
-	if cfg.Routing.FailoverTimeout < 0 {
-		errs.Add("routing.failover_timeout must be >= 0")
-	}
-
-	// Model-based routing requires model_mapping
-	if cfg.Routing.Strategy == "model_based" && len(cfg.Routing.ModelMapping) == 0 {
-		errs.Add("routing.model_mapping is required when strategy is model_based")
-	}
-}
-
-// validateLogging validates the logging configuration section.
 func validateLogging(cfg *Config, errs *ValidationError) {
 	// Level must be valid if set
 	if !validLogLevels[cfg.Logging.Level] {
@@ -356,5 +336,13 @@ func validateOpenAIProvider(provider *ProviderConfig, index int, seenNames map[s
 	if !validCooldownStrategies[provider.CooldownStrategy] {
 		errs.Addf("%s is invalid (got %q, valid: generic, openai, zai)",
 			prefix("cooldown_strategy"), provider.CooldownStrategy)
+	}
+
+	if provider.Priority < 0 {
+		errs.Addf("%s must be >= 0 (got %d)", prefix("priority"), provider.Priority)
+	}
+
+	if provider.Weight < 0 {
+		errs.Addf("%s must be >= 0 (got %d)", prefix("weight"), provider.Weight)
 	}
 }

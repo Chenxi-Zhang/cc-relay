@@ -66,22 +66,11 @@ func (s *ProviderInfoService) RebuildFrom(cfg *config.Config) {
 			continue
 		}
 
-		// Get weight and priority from first key (provider-level defaults)
-		var weight, priority int
-		for _, keyCfg := range providerCfg.Keys {
-			if keyCfg.IsEnabled() {
-				weight = keyCfg.Weight
-				priority = keyCfg.Priority
-				break
-			}
-		}
-
-		// Wire IsHealthy from tracker
 		providerName := providerCfg.Name
 		providerInfos = append(providerInfos, router.ProviderInfo{
 			Provider:  prov,
-			Weight:    weight,
-			Priority:  priority,
+			Weight:    providerCfg.GetEffectiveWeight(),
+			Priority:  providerCfg.GetEffectivePriority(),
 			IsHealthy: s.trackerSvc.Tracker.IsHealthyFunc(providerName),
 		})
 	}

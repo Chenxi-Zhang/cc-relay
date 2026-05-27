@@ -33,6 +33,7 @@ const (
 	StrategyModelBased         = "model_based"
 	StrategyLeastLoaded        = "least_loaded"
 	StrategyWeightedFailover   = "weighted_failover"
+	StrategyPriorityWeightedFailover = "priority_weighted_failover"
 )
 
 // Common errors returned by routers.
@@ -124,6 +125,8 @@ func NewRouter(strategy string, timeout time.Duration) (ProviderRouter, error) {
 		return NewLeastLoadedRouter(), nil
 	case StrategyWeightedFailover:
 		return NewWeightedFailoverRouter(timeout), nil
+	case StrategyPriorityWeightedFailover:
+		return NewPriorityWeightedFailoverRouter(), nil
 	default:
 		return nil, fmt.Errorf("router: unknown strategy %q", strategy)
 	}
