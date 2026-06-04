@@ -133,8 +133,13 @@ func SetupRoutesWithProviders(
 	if pool != nil {
 		providerPools = map[string]*keypool.KeyPool{provider.Name(): pool}
 	}
+	var providerKeys map[string]string
+	if providerKey != "" {
+		providerKeys = map[string]string{provider.Name(): providerKey}
+	}
 	providersHandler := NewProvidersHandlerWithPools(modelsProviders, providerPools)
 	mux.Handle("GET /v1/providers", providersHandler)
+	mux.Handle("GET /v1/providers/{provider}/quota", NewZAIQuotaHandler(modelsProviders, providerPools, providerKeys, cfg.IsZhipuProvider))
 
 	// Health check endpoint (no auth required)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -215,6 +220,20 @@ func SetupRoutesWithLiveKeyPools(opts *RoutesOptions) (http.Handler, error) {
 	}
 	mux.Handle("GET /v1/models", NewModelsHandlerWithProviderFunc(providersGetter))
 	mux.Handle("GET /v1/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
+	mux.Handle("GET /v1/providers/{provider}/quota", NewZAIQuotaHandlerWithProviderFunc(
+		providersGetter,
+		poolsGetter,
+		func() map[string]string {
+			if opts.GetProviderKeys != nil {
+				return opts.GetProviderKeys()
+			}
+			return opts.ProviderKeys
+		},
+		func(providerName string) bool {
+			cfg := opts.ConfigProvider.Get()
+			return cfg != nil && cfg.IsZhipuProvider(providerName)
+		},
+	))
 
 	registerHealthRoute(mux)
 

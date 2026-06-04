@@ -64,11 +64,11 @@ type Config struct {
 	Providers       []ProviderConfig `yaml:"providers" toml:"providers"`
 	OpenAIProviders []ProviderConfig `yaml:"openai_providers" toml:"openai_providers"`
 	Routing         RoutingConfig    `yaml:"routing" toml:"routing"`
-	Logging   LoggingConfig    `yaml:"logging" toml:"logging"`
-	Health    health.Config    `yaml:"health" toml:"health"`
-	Server    ServerConfig     `yaml:"server" toml:"server"`
-	Cache     cache.Config     `yaml:"cache" toml:"cache"`
-	Responses ResponsesConfig `yaml:"responses" toml:"responses"`
+	Logging         LoggingConfig    `yaml:"logging" toml:"logging"`
+	Health          health.Config    `yaml:"health" toml:"health"`
+	Server          ServerConfig     `yaml:"server" toml:"server"`
+	Cache           cache.Config     `yaml:"cache" toml:"cache"`
+	Responses       ResponsesConfig  `yaml:"responses" toml:"responses"`
 }
 
 // RoutingConfig defines provider-level routing strategy behavior.
@@ -346,6 +346,7 @@ type ProviderConfig struct {
 	Models             []string          `yaml:"models" toml:"models"`
 	Pooling            PoolingConfig     `yaml:"pooling" toml:"pooling"`
 	Enabled            bool              `yaml:"enabled" toml:"enabled"`
+	Zhipu              bool              `yaml:"zhipu" toml:"zhipu"`
 	AuthMethod         string            `yaml:"auth_method" toml:"auth_method"` // "x-api-key" (default) or "bearer"
 	// CooldownStrategy selects the 429 cooldown resolver for this provider.
 	// Options: "zai", "openai", "generic", "" (auto-detect from type).
@@ -411,6 +412,26 @@ func (p *ProviderConfig) GetCooldownStrategy() string {
 	default:
 		return "generic"
 	}
+}
+
+// IsZhipu returns true when this provider should use Zhipu-specific integrations.
+func (p *ProviderConfig) IsZhipu() bool {
+	return p.Zhipu
+}
+
+// IsZhipuProvider returns true when the named provider is configured as Zhipu.
+func (c *Config) IsZhipuProvider(providerName string) bool {
+	for i := range c.Providers {
+		if c.Providers[i].Name == providerName {
+			return c.Providers[i].IsZhipu()
+		}
+	}
+	for i := range c.OpenAIProviders {
+		if c.OpenAIProviders[i].Name == providerName {
+			return c.OpenAIProviders[i].IsZhipu()
+		}
+	}
+	return false
 }
 
 // FindProviderCooldownStrategy returns the cooldown strategy for a named provider.
@@ -517,7 +538,6 @@ type LoggingConfig struct {
 	Pretty       bool         `yaml:"pretty" toml:"pretty"`               // enable colored console output
 	DebugOptions DebugOptions `yaml:"debug_options" toml:"debug_options"` // granular debug logging controls
 }
-
 
 // ParseLevel converts a string log level to zerolog.Level.
 // Returns zerolog.InfoLevel if the level string is invalid.

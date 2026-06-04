@@ -60,6 +60,20 @@ func SetupOpenAIRoutes(mux *http.ServeMux, opts *OpenAIRoutesOptions) error {
 		return opts.ProviderPools
 	}
 	mux.Handle("GET /openai/v1/providers", NewProvidersHandlerWithProviderFuncAndPools(providersGetter, poolsGetter))
+	mux.Handle("GET /openai/v1/providers/{provider}/quota", NewZAIQuotaHandlerWithProviderFunc(
+		providersGetter,
+		poolsGetter,
+		func() map[string]string {
+			if opts.GetProviderKeys != nil {
+				return opts.GetProviderKeys()
+			}
+			return opts.ProviderKeys
+		},
+		func(providerName string) bool {
+			cfg := opts.ConfigProvider.Get()
+			return cfg != nil && cfg.IsZhipuProvider(providerName)
+		},
+	))
 
 	return nil
 }

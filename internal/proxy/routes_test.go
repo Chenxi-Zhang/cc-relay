@@ -3,12 +3,14 @@ package proxy_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/omarluq/cc-relay/internal/config"
+	"github.com/omarluq/cc-relay/internal/keypool"
 	"github.com/omarluq/cc-relay/internal/providers"
 	"github.com/omarluq/cc-relay/internal/router"
 	"github.com/stretchr/testify/assert"
@@ -608,6 +610,86 @@ func TestSetupRoutesModelsEndpointEmptyProviders(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
+}
+
+func TestSetupRoutesZAIQuotaEndpointWithPoolKeyIndex(t *testing.T) {
+	t.Parallel()
+
+	quotaBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/monitor/usage/quota/limit", r.URL.Path)
+		assert.Equal(t, "quota-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"msg":"ok","success":true,"data":{"level":"pro","limits":[{"type":"TIME_LIMIT","percentage":7,"usage":1000,"currentValue":72,"remaining":928,"nextResetTime":1774663282997},{"type":"TOKENS_LIMIT","percentage":44,"nextResetTime":1773734366338},{"type":"TOKENS_LIMIT","percentage":53,"nextResetTime":1774154366338}]}}`))
+	}))
+	defer quotaBackend.Close()
+
+	cfg := proxy.TestConfig("")
+	cfg.Providers = []config.ProviderConfig{{
+		Name:    "zai-primary",
+		Type:    "zai",
+		Enabled: true,
+		Zhipu:   true,
+		Keys:    []config.KeyConfig{{Key: "quota-key"}},
+	}}
+	provider := providers.NewZAIProviderWithModels(
+		"zai-primary",
+		quotaBackend.URL+"/api/anthropic",
+		[]string{"GLM-5"},
+	)
+	pool, err := keypool.NewKeyPool("zai-primary", keypool.PoolConfig{
+		Strategy: "round_robin",
+		Keys:     []keypool.KeyConfig{{APIKey: "quota-key"}},
+	})
+	require.NoError(t, err)
+
+	handler, err := proxy.SetupRoutesWithProviders(cfg, provider, "", pool, []providers.Provider{provider})
+	require.NoError(t, err)
+
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/v1/providers/zai-primary/quota?key_index=0", http.NoBody)
+	rec := proxy.ServeRequest(t, handler, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Object   string                     `json:"object"`
+		Provider string                     `json:"provider"`
+		KeyID    string                     `json:"key_id"`
+		Quota    providers.ZAIQuotaResponse `json:"quota"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	assert.Equal(t, "zai_quota", body.Object)
+	assert.Equal(t, "zai-primary", body.Provider)
+	assert.Equal(t, "[0-****-key]", body.KeyID)
+	assert.Equal(t, "pro", body.Quota.Data.Level)
+	require.Len(t, body.Quota.Data.Limits, 3)
+	assert.Equal(t, 928, body.Quota.Data.Limits[0].Remaining)
+}
+
+func TestSetupRoutesZAIQuotaEndpointRequiresZhipuConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := proxy.TestConfig("")
+	cfg.Providers = []config.ProviderConfig{{
+		Name:    "zai-primary",
+		Type:    "zai",
+		Enabled: true,
+		Zhipu:   false,
+		Keys:    []config.KeyConfig{{Key: "quota-key"}},
+	}}
+	provider := providers.NewZAIProviderWithModels("zai-primary", "https://api.z.ai/api/anthropic", []string{"GLM-5"})
+	pool, err := keypool.NewKeyPool("zai-primary", keypool.PoolConfig{
+		Strategy: "round_robin",
+		Keys:     []keypool.KeyConfig{{APIKey: "quota-key"}},
+	})
+	require.NoError(t, err)
+
+	handler, err := proxy.SetupRoutesWithProviders(cfg, provider, "", pool, []providers.Provider{provider})
+	require.NoError(t, err)
+
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/v1/providers/zai-primary/quota?key_index=0", http.NoBody)
+	rec := proxy.ServeRequest(t, handler, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "zhipu: true")
 }
 
 func TestSetupRoutesSubscriptionTokenAuth(t *testing.T) {
