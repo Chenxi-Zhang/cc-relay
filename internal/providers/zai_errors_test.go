@@ -21,28 +21,28 @@ func TestParseZAI429Error_TransientCodes(t *testing.T) {
 			body:     `{"error":{"code":"1302","message":"Too many concurrent requests"}}`,
 			code:     ZAIErrConcurrentLimit,
 			category: ZAICatTransient,
-			cooldown: 30 * time.Second,
+			cooldown: 20 * time.Second,
 		},
 		{
 			name:     "frequency limit 1303",
 			body:     `{"error":{"code":"1303","message":"Frequency too high"}}`,
 			code:     ZAIErrFrequencyLimit,
 			category: ZAICatTransient,
-			cooldown: 60 * time.Second,
+			cooldown: 20 * time.Second,
 		},
 		{
 			name:     "traffic limit 1305",
 			body:     `{"error":{"code":"1305","message":"Traffic limit triggered"}}`,
 			code:     ZAIErrTrafficLimit,
 			category: ZAICatTransient,
-			cooldown: 2 * time.Minute,
+			cooldown: 20 * time.Second,
 		},
 		{
 			name:     "model overloaded 1312",
 			body:     `{"error":{"code":"1312","message":"Model overloaded"}}`,
 			code:     ZAIErrModelOverloaded,
 			category: ZAICatTransient,
-			cooldown: 2 * time.Minute,
+			cooldown: 20 * time.Second,
 		},
 	}
 

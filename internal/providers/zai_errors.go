@@ -206,13 +206,13 @@ func classifyZAIError(code string) ZAIErrorCategory {
 func suggestedCooldown(code string) time.Duration {
 	switch code {
 	case ZAIErrConcurrentLimit:
-		return 30 * time.Second
+		return 20 * time.Second
 	case ZAIErrFrequencyLimit:
-		return 60 * time.Second
+		return 20 * time.Second
 	case ZAIErrDailyCallLimit:
 		return 1 * time.Hour // cap at 1h, will retry hourly
 	case ZAIErrTrafficLimit, ZAIErrModelOverloaded:
-		return 2 * time.Minute
+		return 20 * time.Second
 	case ZAIErrRetryable400:
 		return 30 * time.Second
 	case ZAIErrUsageLimit:
@@ -223,7 +223,7 @@ func suggestedCooldown(code string) time.Duration {
 		ZAIErrAccountLocked, ZAIErrAccountArrears, ZAIErrAccountViolation:
 		return 0 // permanent — no cooldown helps
 	default:
-		return 60 * time.Second
+		return 20 * time.Second
 	}
 }
 

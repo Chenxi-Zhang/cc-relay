@@ -11,7 +11,7 @@ import (
 
 const MaxCooldownCap = 6 * time.Hour
 
-const defaultCooldown = 60 * time.Second
+const defaultCooldown = 20 * time.Second
 
 // CooldownDecision is the result of resolving a rate-limit response.
 type CooldownDecision struct {
