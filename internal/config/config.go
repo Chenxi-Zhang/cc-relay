@@ -286,6 +286,10 @@ type ResponsesConfig struct {
 	// ResponsesAPIPrefix is the URL prefix for Responses API routes.
 	// Default: "/v1".
 	ResponsesAPIPrefix string `yaml:"responses_api_prefix" toml:"responses_api_prefix"`
+
+	// ProviderNames optionally restricts the native Responses API route to the
+	// named OpenAI-compatible providers. Empty means all enabled providers.
+	ProviderNames []string `yaml:"providers" toml:"providers"`
 }
 
 const (

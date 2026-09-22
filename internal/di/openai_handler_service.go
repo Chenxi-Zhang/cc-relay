@@ -108,7 +108,7 @@ func NewOpenAIHandler(i do.Injector) (*OpenAIHandlerService, error) {
 	responsesOpts := &proxy.OpenAIRoutesOptions{
 		ProviderRouter:     liveRouter,
 		ConfigProvider:     cfgSvc,
-		ProviderInfosFunc:  providerInfoSvc.Get,
+		ProviderInfosFunc:  responsesProviderInfos(providerInfoSvc.Get, cfgSvc),
 		GetProviderPools:   poolMapSvc.GetPools,
 		GetProviderKeys:    poolMapSvc.GetKeys,
 		GetAllProviders:    providerSvc.GetAllProviders,

@@ -29,7 +29,7 @@ type OpenAIHandlerOptions struct {
 	ConfigProvider   config.RuntimeConfigGetter
 }
 
-// OpenAIHandler handles OpenAI Chat Completions API requests.
+// OpenAIHandler proxies OpenAI-format API requests to selected providers.
 // It is completely separate from the Anthropic Handler.
 type OpenAIHandler struct {
 	router           router.ProviderRouter

@@ -340,6 +340,26 @@ health:
     half_open_probes: 3
 
 # ============================================================================
+# Native OpenAI Responses API
+# ============================================================================
+# POST /openai/v1/responses is forwarded natively to the selected provider's
+# POST /responses endpoint. No Responses-to-Chat protocol conversion is performed.
+#
+# Provider base_url must be the API root that contains /responses, for example:
+#   https://api.openai.com/v1
+#
+# responses.providers is optional. When omitted or empty, every enabled
+# openai_providers entry is eligible. When set, only the named providers receive
+# Responses API traffic; Chat Completions continues to use the full pool.
+#
+# Responses conversations using previous_response_id are stateful. Until provider
+# affinity is implemented, configure exactly one Responses provider or send the
+# full input instead of referencing a response stored by another upstream.
+responses:
+  # providers:
+  #   - "openai-main"
+
+# ============================================================================
 # OpenAI-Compatible Providers
 # ============================================================================
 # These providers support the OpenAI Chat Completions API protocol.

@@ -10,7 +10,7 @@ import (
 
 // SetupResponsesRoutes registers Responses API routes on the given mux.
 // Routes (mounted under the OpenAI mux):
-//   - POST /openai/v1/responses — Responses API endpoint (Codex-compatible)
+//   - POST /openai/v1/responses — native Responses API reverse proxy
 //   - GET /openai/v1/responses/models — Responses API model listing
 //   - GET /openai/v1/responses/providers — Responses API provider status
 //
@@ -26,11 +26,11 @@ func SetupResponsesRoutes(mux *http.ServeMux, opts *OpenAIRoutesOptions) error {
 		return errors.New("responses routes options are required")
 	}
 
-	chatHandler, err := buildResponsesHandler(opts)
+	responsesHandler, err := buildResponsesHandler(opts)
 	if err != nil {
 		return err
 	}
-	mux.Handle("POST /openai/v1/responses", chatHandler)
+	mux.Handle("POST /openai/v1/responses", responsesHandler)
 
 	// Reuse existing OpenAI models endpoint for Responses API
 	providersGetter := responsesLiveProvidersGetter(opts)
@@ -47,10 +47,10 @@ func SetupResponsesRoutes(mux *http.ServeMux, opts *OpenAIRoutesOptions) error {
 	return nil
 }
 
-// buildResponsesHandler wires the Responses handler with middleware stack.
+// buildResponsesHandler wires the native Responses reverse proxy with middleware stack.
 // No auth middleware (local deployment).
 func buildResponsesHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
-	handler, err := NewResponsesHandler(&OpenAIHandlerOptions{
+	handler, err := NewOpenAIHandler(&OpenAIHandlerOptions{
 		Router:           opts.ProviderRouter,
 		Providers:        opts.ProviderInfosFunc,
 		GetProviderPools: opts.GetProviderPools,
