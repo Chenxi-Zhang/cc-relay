@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -40,6 +41,7 @@ type OpenAIHandler struct {
 	proxyMu          sync.RWMutex
 	debugOpts        config.DebugOptions
 	configProvider   config.RuntimeConfigGetter
+	responsesAPI     bool
 }
 
 // NewOpenAIHandler creates a new handler for OpenAI-format requests.
@@ -249,6 +251,22 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Store key ID in context for response modification.
 	ctx := context.WithValue(r.Context(), keyIDContextKey, keyID)
 	ctx = context.WithValue(ctx, providerNameContextKey, prov.Name())
+	if h.responsesAPI && h.configProvider != nil {
+		if cfg := h.configProvider.Get(); cfg != nil {
+			for _, providerCfg := range cfg.OpenAIProviders {
+				if providerCfg.Name != prov.Name() || providerCfg.ResponsesURL == "" {
+					continue
+				}
+				responsesURL, parseErr := url.Parse(providerCfg.ResponsesURL)
+				if parseErr != nil || responsesURL.Host == "" || (responsesURL.Scheme != "http" && responsesURL.Scheme != "https") {
+					writeOpenAIError(w, http.StatusInternalServerError, "invalid responses_url for provider", "server_error", "invalid_provider_config")
+					return
+				}
+				ctx = context.WithValue(ctx, responsesURLContextKey{}, responsesURL)
+				break
+			}
+		}
+	}
 	r = r.WithContext(ctx)
 
 	// Step 7: Apply model mapping via ModelRewriter.

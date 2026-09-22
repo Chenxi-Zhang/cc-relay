@@ -347,6 +347,9 @@ health:
 #
 # Provider base_url must be the API root that contains /responses, for example:
 #   https://api.openai.com/v1
+# If Chat Completions and Responses use different endpoints, set the provider's
+# responses_url to the complete Responses endpoint. For Zhipu GLM Coding Plan:
+#   responses_url: https://open.bigmodel.cn/api/v1/responses
 #
 # responses.providers is optional. When omitted or empty, every enabled
 # openai_providers entry is eligible. When set, only the named providers receive

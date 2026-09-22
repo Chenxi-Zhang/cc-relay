@@ -457,6 +457,7 @@ type ProviderConfig struct {
 	Name               string            `yaml:"name" toml:"name"`
 	Type               string            `yaml:"type" toml:"type"`
 	BaseURL            string            `yaml:"base_url" toml:"base_url"`
+	ResponsesURL       string            `yaml:"responses_url" toml:"responses_url"`
 	AzureDeploymentID  string            `yaml:"azure_deployment_id" toml:"azure_deployment_id"`
 	AWSAccessKeyID     string            `yaml:"aws_access_key_id" toml:"aws_access_key_id"`
 	AzureResourceName  string            `yaml:"azure_resource_name" toml:"azure_resource_name"`

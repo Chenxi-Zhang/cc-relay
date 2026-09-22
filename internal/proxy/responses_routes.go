@@ -62,6 +62,7 @@ func buildResponsesHandler(opts *OpenAIRoutesOptions) (http.Handler, error) {
 		return nil, err
 	}
 
+	handler.responsesAPI = true
 	return wireOpenAICompatMiddleware(handler, opts), nil
 }
 

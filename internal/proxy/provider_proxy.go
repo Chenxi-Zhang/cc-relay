@@ -22,6 +22,8 @@ import (
 // ModifyResponseFunc is a callback for additional response processing.
 type ModifyResponseFunc func(resp *http.Response) error
 
+type responsesURLContextKey struct{}
+
 // ProviderProxy bundles a provider with its dedicated reverse proxy.
 // Each proxy has the provider's URL and auth baked in at creation time,
 // ensuring requests are routed to the correct backend with correct authentication.
@@ -121,6 +123,13 @@ func (pp *ProviderProxy) rewrite(proxyRequest *httputil.ProxyRequest) {
 	}
 
 	// Standard providers: use static target URL
+	if responsesURL, ok := proxyRequest.In.Context().Value(responsesURLContextKey{}).(*url.URL); ok {
+		proxyRequest.Out.URL = responsesURL
+		proxyRequest.Out.Host = responsesURL.Host
+		proxyRequest.SetXForwarded()
+		pp.setAuth(proxyRequest)
+		return
+	}
 	proxyRequest.SetURL(pp.targetURL)
 	proxyRequest.SetXForwarded()
 	pp.setAuth(proxyRequest)
