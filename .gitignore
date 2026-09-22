@@ -1,4 +1,5 @@
 .planning/intel/
+.omo/
 
 # Build artifacts
 bin/
