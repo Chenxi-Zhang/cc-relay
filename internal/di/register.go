@@ -37,5 +37,6 @@ func RegisterSingletons(injector do.Injector) {
 	do.Provide(injector, NewOpenAIKeyPoolMap)
 	do.Provide(injector, NewOpenAIProviderInfo)
 	do.Provide(injector, NewOpenAIHandler)
+	do.Provide(injector, NewImagesHandler)
 	do.Provide(injector, NewHTTPServer)
 }

@@ -2,6 +2,7 @@ package di
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -28,6 +29,14 @@ func NewHTTPServer(i do.Injector) (*ServerService, error) {
 		openaiSvc := do.MustInvoke[*OpenAIHandlerService](i)
 		rootMux.Handle("/openai/", openaiSvc.Handler)
 		log.Info().Int("count", len(cfgSvc.Config.OpenAIProviders)).Msg("openai providers mounted")
+	}
+
+	if cfgSvc.Config.CodexImages.Enabled {
+		imagesSvc := do.MustInvoke[*ImagesHandlerService](i)
+		if err := imagesSvc.SetupImagesRoutes(rootMux); err != nil {
+			return nil, fmt.Errorf("failed to setup codex image routes: %w", err)
+		}
+		log.Info().Msg("codex image gateway mounted at /v1/images")
 	}
 
 	enableHTTP2 := cfgSvc.Config.Server.EnableHTTP2

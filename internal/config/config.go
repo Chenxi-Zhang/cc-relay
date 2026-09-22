@@ -61,14 +61,15 @@ const (
 
 // Config represents the complete cc-relay configuration.
 type Config struct {
-	Providers       []ProviderConfig `yaml:"providers" toml:"providers"`
-	OpenAIProviders []ProviderConfig `yaml:"openai_providers" toml:"openai_providers"`
-	Routing         RoutingConfig    `yaml:"routing" toml:"routing"`
-	Logging         LoggingConfig    `yaml:"logging" toml:"logging"`
-	Health          health.Config    `yaml:"health" toml:"health"`
-	Server          ServerConfig     `yaml:"server" toml:"server"`
-	Cache           cache.Config     `yaml:"cache" toml:"cache"`
-	Responses       ResponsesConfig  `yaml:"responses" toml:"responses"`
+	Providers       []ProviderConfig  `yaml:"providers" toml:"providers"`
+	OpenAIProviders []ProviderConfig  `yaml:"openai_providers" toml:"openai_providers"`
+	Routing         RoutingConfig     `yaml:"routing" toml:"routing"`
+	Logging         LoggingConfig     `yaml:"logging" toml:"logging"`
+	Health          health.Config     `yaml:"health" toml:"health"`
+	Server          ServerConfig      `yaml:"server" toml:"server"`
+	Cache           cache.Config      `yaml:"cache" toml:"cache"`
+	Responses       ResponsesConfig   `yaml:"responses" toml:"responses"`
+	CodexImages     CodexImagesConfig `yaml:"codex_images" toml:"codex_images"`
 }
 
 // RoutingConfig defines provider-level routing strategy behavior.
@@ -311,6 +312,121 @@ func (r *ResponsesConfig) GetResponsesAPIPrefix() string {
 		return DefaultResponsesAPIPrefix
 	}
 	return r.ResponsesAPIPrefix
+}
+
+// CodexImagesConfig configures the Codex image generation gateway, which
+// translates OpenAI Images API requests into Codex backend Responses requests
+// (image_generation tool) using the local Codex CLI login state.
+type CodexImagesConfig struct {
+	// Enabled controls whether /v1/images/generations and /v1/images/edits are served.
+	Enabled bool `yaml:"enabled" toml:"enabled"`
+
+	// AuthFile is the Codex CLI auth file to read the OAuth token from.
+	// Default: ~/.codex/auth.json. The file is only read, never written —
+	// token refresh is owned by the Codex CLI/desktop app.
+	AuthFile string `yaml:"auth_file" toml:"auth_file"`
+
+	// BaseURL is the ChatGPT backend origin.
+	// Default: https://chatgpt.com. Point this at a reverse proxy if needed.
+	BaseURL string `yaml:"base_url" toml:"base_url"`
+
+	// Model is the host model that drives the image_generation tool.
+	// Default: gpt-5.6-luna. Any model available to the account via the
+	// Codex backend works.
+	Model string `yaml:"model" toml:"model"`
+
+	// Originator is sent as the originator header. Default: codex_cli_rs.
+	Originator string `yaml:"originator" toml:"originator"`
+
+	// UserAgent is sent as the User-Agent header. Defaults to a Codex CLI UA.
+	UserAgent string `yaml:"user_agent" toml:"user_agent"`
+
+	// Instructions overrides the system instructions sent to the host model.
+	// Defaults to a minimal instruction that triggers the image tool directly.
+	Instructions string `yaml:"instructions" toml:"instructions"`
+
+	// RequestTimeoutMs is the per-image upstream timeout in milliseconds.
+	// Image generation takes 30-150s per image. Default: 300000 (5 minutes).
+	RequestTimeoutMs int `yaml:"request_timeout_ms" toml:"request_timeout_ms"`
+
+	// MaxImagesPerRequest caps the n parameter. Default: 10.
+	MaxImagesPerRequest int `yaml:"max_images_per_request" toml:"max_images_per_request"`
+}
+
+// Defaults for the Codex image gateway.
+const (
+	// DefaultCodexImagesBaseURL is the ChatGPT backend origin.
+	DefaultCodexImagesBaseURL = "https://chatgpt.com"
+	// DefaultCodexImagesModel is the validated default host model.
+	DefaultCodexImagesModel = "gpt-5.6-luna"
+	// DefaultCodexImagesOriginator is the default originator header.
+	DefaultCodexImagesOriginator = "codex_cli_rs"
+	// DefaultCodexImagesUserAgent is the default User-Agent header.
+	DefaultCodexImagesUserAgent = "codex_cli_rs/0.55.0 (Windows 11; x86_64) WindowsTerminal"
+	// DefaultCodexImagesInstructions is the default system instruction.
+	DefaultCodexImagesInstructions = "You are Codex, a coding assistant. " +
+		"When the user asks to create or edit an image, call the image_generation tool immediately. " +
+		"Do not ask clarifying questions."
+	// DefaultCodexImagesRequestTimeoutMs is the default per-image timeout.
+	DefaultCodexImagesRequestTimeoutMs = 300000
+	// DefaultCodexImagesMaxN is the default cap for the n parameter.
+	DefaultCodexImagesMaxN = 10
+)
+
+// GetBaseURL returns the backend origin with default fallback.
+func (c *CodexImagesConfig) GetBaseURL() string {
+	if c.BaseURL == "" {
+		return DefaultCodexImagesBaseURL
+	}
+	return strings.TrimRight(c.BaseURL, "/")
+}
+
+// GetModel returns the host model with default fallback.
+func (c *CodexImagesConfig) GetModel() string {
+	if c.Model == "" {
+		return DefaultCodexImagesModel
+	}
+	return c.Model
+}
+
+// GetOriginator returns the originator header with default fallback.
+func (c *CodexImagesConfig) GetOriginator() string {
+	if c.Originator == "" {
+		return DefaultCodexImagesOriginator
+	}
+	return c.Originator
+}
+
+// GetUserAgent returns the User-Agent header with default fallback.
+func (c *CodexImagesConfig) GetUserAgent() string {
+	if c.UserAgent == "" {
+		return DefaultCodexImagesUserAgent
+	}
+	return c.UserAgent
+}
+
+// GetInstructions returns the system instructions with default fallback.
+func (c *CodexImagesConfig) GetInstructions() string {
+	if c.Instructions == "" {
+		return DefaultCodexImagesInstructions
+	}
+	return c.Instructions
+}
+
+// GetRequestTimeout returns the per-image upstream timeout.
+func (c *CodexImagesConfig) GetRequestTimeout() time.Duration {
+	if c.RequestTimeoutMs <= 0 {
+		return DefaultCodexImagesRequestTimeoutMs * time.Millisecond
+	}
+	return time.Duration(c.RequestTimeoutMs) * time.Millisecond
+}
+
+// GetMaxImagesPerRequest returns the n cap with default fallback.
+func (c *CodexImagesConfig) GetMaxImagesPerRequest() int {
+	if c.MaxImagesPerRequest <= 0 {
+		return DefaultCodexImagesMaxN
+	}
+	return c.MaxImagesPerRequest
 }
 
 // IsEnabled returns true if any authentication method is configured.
