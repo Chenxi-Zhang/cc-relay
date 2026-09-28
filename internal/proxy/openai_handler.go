@@ -129,15 +129,9 @@ func (h *OpenAIHandler) hasAvailableKeys(provName string) bool {
 
 // ServeHTTP implements http.Handler for OpenAI Chat Completions.
 //
-// Flow:
-//  1. Read request body
-//  2. Parse model from body
-//  3. Detect streaming — set SSE headers if streaming
-//  4. Select provider via router
-//  5. Get key from keypool (or fallback key)
-//  6. Apply model mapping
-//  7. Proxy request via ProviderProxy (SSE passthrough for streaming)
-//  8. Return response (passthrough)
+// When retry is enabled, dispatches to serveOpenAIWithRetry (non-streaming) or
+// serveOpenAIStreamingWithRetry (streaming) for three-level 429 retry.
+// Otherwise falls through to the single-attempt direct proxy path.
 func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger := zerolog.Ctx(r.Context())
 
@@ -156,14 +150,38 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Parse model from body.
 	model := extractOpenAIModel(bodyBytes)
 
-	// Step 3: Detect streaming.
-	// SSE headers are NOT set here — the ProviderProxy's modifyResponse
-	// handles them based on the backend response's Content-Type.
-	// This avoids setting text/event-stream when the backend returns an error (e.g. 500 JSON).
-	// No retry for streaming (v1 simplification).
-	_ = OpenAIGetIsStreaming(bodyBytes)
+	isStreaming := OpenAIGetIsStreaming(bodyBytes)
 
-	// Step 4: Select provider.
+	retryCfg := h.getRetryConfig()
+	if retryCfg.Enabled {
+		if isStreaming {
+			h.serveOpenAIStreamingWithRetry(w, r, bodyBytes, model, retryCfg)
+		} else {
+			h.serveOpenAIWithRetry(w, r, bodyBytes, model, retryCfg)
+		}
+		return
+	}
+
+	h.serveOpenAIDirect(w, r, bodyBytes, model)
+}
+
+// getRetryConfig returns the retry configuration from live config.
+func (h *OpenAIHandler) getRetryConfig() config.RetryConfig {
+	if h.configProvider != nil {
+		if cfg := h.configProvider.Get(); cfg != nil {
+			return cfg.Routing.Retry
+		}
+	}
+	return config.RetryConfig{}
+}
+
+// serveOpenAIDirect is the original single-attempt proxy path (retry disabled).
+func (h *OpenAIHandler) serveOpenAIDirect(
+	w http.ResponseWriter, r *http.Request, bodyBytes []byte, model string,
+) {
+	logger := zerolog.Ctx(r.Context())
+
+	// Select provider.
 	infos := h.providers()
 	if len(infos) == 0 {
 		writeOpenAIError(w, http.StatusServiceUnavailable,
