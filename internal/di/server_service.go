@@ -20,10 +20,21 @@ type ServerService struct {
 // NewHTTPServer creates the HTTP server with both Anthropic and OpenAI routes.
 func NewHTTPServer(i do.Injector) (*ServerService, error) {
 	cfgSvc := do.MustInvoke[*ConfigService](i)
-	handlerSvc := do.MustInvoke[*HandlerService](i)
 
 	rootMux := http.NewServeMux()
-	rootMux.Handle("/", handlerSvc.Handler)
+	hasAnthropicProvider := false
+	for _, provider := range cfgSvc.Config.Providers {
+		if provider.Enabled {
+			hasAnthropicProvider = true
+			break
+		}
+	}
+	if hasAnthropicProvider {
+		handlerSvc := do.MustInvoke[*HandlerService](i)
+		rootMux.Handle("/", handlerSvc.Handler)
+	} else if len(cfgSvc.Config.OpenAIProviders) == 0 {
+		return nil, fmt.Errorf("no enabled provider found in providers or openai_providers")
+	}
 
 	if len(cfgSvc.Config.OpenAIProviders) > 0 {
 		openaiSvc := do.MustInvoke[*OpenAIHandlerService](i)

@@ -726,6 +726,33 @@ func TestNewProxyHandler(t *testing.T) {
 
 func TestNewHTTPServer(t *testing.T) {
 	t.Parallel()
+	t.Run("starts with only an OpenAI provider enabled", func(t *testing.T) {
+		t.Parallel()
+		injector := createTestInjector(t, `
+server:
+  listen: "127.0.0.1:8787"
+cache:
+  mode: disabled
+providers:
+  - name: anthropic
+    type: anthropic
+    enabled: false
+    keys:
+      - key: test-key
+openai_providers:
+  - name: openai
+    type: openai
+    enabled: true
+    base_url: https://api.openai.com/v1
+    keys:
+      - key: test-key
+`)
+		defer shutdownInjector(injector)
+
+		serverSvc, err := do.Invoke[*di.ServerService](injector)
+		require.NoError(t, err)
+		assert.NotNil(t, serverSvc.Server)
+	})
 	t.Run("creates server with dependencies", func(t *testing.T) {
 		t.Parallel()
 		injector := createTestInjector(t, singleKeyConfig)
