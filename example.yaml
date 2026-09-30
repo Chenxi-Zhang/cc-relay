@@ -438,9 +438,9 @@ responses:
 # image_generation tool (gpt-image).
 #
 # The gateway reads the OAuth token from the local Codex CLI login state
-# (~/.codex/auth.json, read-only). Token refresh is owned by the Codex app;
-# if the token expires, open the Codex app once and the gateway picks up the
-# refreshed token automatically (mtime-watched).
+# (~/.codex/auth.json, mtime-watched). It can also refresh the token itself
+# using the same OAuth endpoint and client ID as the Codex client, so an
+# expired token no longer requires opening the Codex app first.
 #
 # Endpoints:
 #   POST /v1/images/generations   (JSON: model, prompt, n, size, quality, ...)

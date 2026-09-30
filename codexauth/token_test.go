@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeAuthFile(t *testing.T, dir string, accessToken, accountID string) string {
@@ -46,6 +47,12 @@ func TestTokenSourceGet(t *testing.T) {
 
 	// Rotation: rewrite the file, Get must observe the new token.
 	writeAuthFile(t, dir, "at-2", "acct-2")
+	// Nudge mtime past the cached timestamp: an immediate rewrite of the
+	// same-size file can land within one filesystem timestamp tick.
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatalf("bump auth file mtime: %v", err)
+	}
 	tok, err = src.Get()
 	if err != nil {
 		t.Fatalf("Get after rotation: %v", err)

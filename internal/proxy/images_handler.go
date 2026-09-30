@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/omarluq/cc-relay/internal/codexauth"
+	"github.com/omarluq/cc-relay/codexauth"
 	"github.com/omarluq/cc-relay/internal/config"
 )
 

@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/omarluq/cc-relay/internal/codexauth"
+	"github.com/omarluq/cc-relay/codexauth"
 	"github.com/omarluq/cc-relay/internal/config"
 )
 
@@ -30,9 +30,9 @@ func newTestImagesHandler(t *testing.T, upstreamURL string, tokens CodexImagesTo
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.CodexImages = config.CodexImagesConfig{
-		Enabled:         true,
-		BaseURL:         upstreamURL,
-		Model:           "gpt-test",
+		Enabled:          true,
+		BaseURL:          upstreamURL,
+		Model:            "gpt-test",
 		RequestTimeoutMs: 5000,
 	}
 	h, err := NewImagesHandler(&ImagesHandlerOptions{
